@@ -1,5 +1,7 @@
 # 3D 贪吃蛇（Unity）
 
+[English](README.en.md)
+
 一个跑在立方体空间里的贪吃蛇：不只有前后左右，还能上下飞。
 
 ![菜单](docs/screenshots/menu.png)
