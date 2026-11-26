@@ -61,8 +61,9 @@ Windows 64 位（解压后双击 `Snake3D.exe`，无需安装 Unity）：
 
 1. 安装 **Unity 2022.3 LTS**（本项目在 2022.3.62f3c1 上开发）
 2. Unity Hub → Add → 选择本仓库目录
-3. 打开 `Assets/Scenes/Game.unity`
-4. 点 Play
+3. **首次打开需要 1–2 分钟**（Unity 生成 `Library/` 并导入资源，属正常现象）
+4. 打开 `Assets/Scenes/Game.unity`
+5. 点 Play
 
 场景里已经配好三个物体：
 
