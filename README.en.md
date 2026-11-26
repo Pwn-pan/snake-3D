@@ -7,6 +7,12 @@ A snake game that lives in a cube — you can move forward, sideways, **and up a
 
 [中文说明](README.md)
 
+## Download
+
+Windows 64-bit build (unzip and run `Snake3D.exe` — Unity is not required):
+
+**[Download v0.9](https://github.com/Pwn-pan/snake-3D/releases/latest)** (25 MB)
+
 ## Controls
 
 | Input | Action |

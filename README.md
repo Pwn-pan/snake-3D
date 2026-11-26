@@ -7,6 +7,12 @@
 ![菜单](docs/screenshots/menu.png)
 ![游戏](docs/screenshots/gameplay.png)
 
+## 下载
+
+Windows 64 位（解压后双击 `Snake3D.exe`，无需安装 Unity）：
+
+**[下载 v0.9](https://github.com/Pwn-pan/snake-3D/releases/latest)**（25 MB）
+
 ## 玩法
 
 | 操作 | 作用 |
