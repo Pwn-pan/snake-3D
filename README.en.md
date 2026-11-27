@@ -57,6 +57,7 @@ Requirements: Windows 10 / 11 (64-bit) and a DX11-capable GPU. **No Unity instal
 - **Two camera modes** — a fixed third-person view that orbits the head on a circle (the head stays centred), or a free orbit view around the map.
 - **Real-time lighting** — a directional light that follows the camera, a point light attached to the head, fog, soft shadows.
 - **Layer highlight** — the horizontal layer containing the head is outlined with translucent blocks and a wireframe box, making height easy to judge.
+- **Leaderboard**: one board per difficulty + map, storing nickname, score and run time; a name keeps only its best run. Data is stored locally, with a hook for a cloud backend.
 - Settings (volumes, speed, camera responsiveness, view mode) persist through `PlayerPrefs`.
 
 ## Opening in Unity
