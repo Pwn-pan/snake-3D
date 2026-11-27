@@ -18,7 +18,7 @@ public class LeaderboardClient : MonoBehaviour
     [Tooltip("云函数 HTTP 访问地址，例如 https://xxx.service.tcloudbase.com/snake")]
     public string endpoint = DefaultEndpoint;
 
-    private const string DefaultEndpoint = "";   // ← 部署后把地址填这里，打包才会带上
+    private const string DefaultEndpoint = "https://straight-cheetah-d4e7wzr06f62287-1542870096.ap-shanghai.app.tcloudbase.com/snake";
 
     public bool LocalReady => true;                       // 本地榜永远可用
     public bool Ready => !string.IsNullOrEmpty(endpoint) && endpoint.StartsWith("http");
