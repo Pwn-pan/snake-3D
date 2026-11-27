@@ -73,75 +73,72 @@ public class AudioManager : MonoBehaviour
     // ---------------- 合成 ----------------
     private const int Rate = 44100;
 
-    /// <summary>生成一段 16 秒的多层循环：铺底和弦 + 贝斯 + 旋律 + 轻打击。</summary>
+    /// <summary>欢快的循环 BGM：C 大调、108 BPM。</summary>
     private static AudioClip BuildBgm()
     {
-        const float bpm = 78f;
-        const float beat = 60f / bpm;          // 一拍时长
-        const int bars = 8;                    // 8 小节
+        const float bpm = 108f;
+        const float beat = 60f / bpm;
+        const int bars = 8;
         const int beatsPerBar = 4;
         float totalSec = bars * beatsPerBar * beat;
         int total = Mathf.RoundToInt(totalSec * Rate);
 
         var data = new float[total];
-        var rng = new System.Random(20251126);
+        var rng = new System.Random(20261128);
 
-        // 和弦进行：Am - F - C - G（每两小节换一次）
         float[][] chords =
         {
-            new[] { 220.00f, 261.63f, 329.63f },   // Am
-            new[] { 174.61f, 220.00f, 261.63f },   // F
-            new[] { 261.63f, 329.63f, 392.00f },   // C
-            new[] { 196.00f, 246.94f, 293.66f }    // G
+            new[] { 261.63f, 329.63f, 392.00f },
+            new[] { 196.00f, 246.94f, 293.66f },
+            new[] { 220.00f, 261.63f, 329.63f },
+            new[] { 174.61f, 220.00f, 261.63f }
         };
-        float[] bassRoots = { 110.00f, 87.31f, 130.81f, 98.00f };   // A2 F2 C3 G2
+        float[] bassRoots = { 130.81f, 98.00f, 110.00f, 87.31f };
 
-        // 五声音阶（A 小调）：A C D E G
-        float[] scale = { 440.00f, 523.25f, 587.33f, 659.25f, 783.99f, 880.00f };
-        int[] melody = { 0, 2, 4, 3, 2, 0, 3, 4, 5, 4, 2, 3, 1, 0, 2, 3 };
-        int[] restMask = { 1, 0, 1, 1, 0, 1, 1, 0, 1, 1, 0, 1, 1, 0, 1, 1 }; // 0=休止
+        float[] scale = { 523.25f, 587.33f, 659.25f, 783.99f, 880.00f, 1046.50f };
+        int[] melody = { 0, 2, 4, 2, 3, 4, 5, 4, 3, 2, 1, 2, 3, 4, 2, 0 };
+        int[] restMask = { 1, 1, 0, 1, 1, 0, 1, 1, 1, 0, 1, 1, 0, 1, 1, 1 };
 
         int eighth = Mathf.RoundToInt(beat * 0.5f * Rate);
 
         for (int bar = 0; bar < bars; bar++)
         {
-            int chordIdx = (bar / 2) % chords.Length;
+            int chordIdx = bar % chords.Length;
             float[] chord = chords[chordIdx];
             float bass = bassRoots[chordIdx];
             int barStart = Mathf.RoundToInt(bar * beatsPerBar * beat * Rate);
-
-            // ---- 铺底和弦（整小节，慢起慢落）----
             int barLen = Mathf.RoundToInt(beatsPerBar * beat * Rate);
+
             for (int i = 0; i < barLen && barStart + i < total; i++)
             {
                 float t = i / (float)Rate;
-                float env = Mathf.Min(1f, t / 0.35f) * Mathf.Min(1f, (barLen / (float)Rate - t) / 0.5f);
+                float env = Mathf.Min(1f, t / 0.12f) * Mathf.Min(1f, (barLen / (float)Rate - t) / 0.25f);
                 float v = 0f;
                 foreach (float f in chord)
                 {
-                    v += Mathf.Sin(2f * Mathf.PI * f * t) * 0.5f;
-                    v += Mathf.Sin(2f * Mathf.PI * f * 2f * t) * 0.12f;
+                    v += Mathf.Sin(2f * Mathf.PI * f * t) * 0.45f;
+                    v += Mathf.Sin(2f * Mathf.PI * f * 2f * t) * 0.18f;
                 }
-                data[barStart + i] += v * env * 0.075f;
+                data[barStart + i] += v * env * 0.06f;
             }
 
-            // ---- 贝斯（每拍一下，第 1、3 拍更重）----
-            for (int b = 0; b < beatsPerBar; b++)
+            for (int n = 0; n < 8; n++)
             {
-                int bs = Mathf.RoundToInt((bar * beatsPerBar + b) * beat * Rate);
-                int len = Mathf.RoundToInt(beat * 0.85f * Rate);
-                float amp = (b % 2 == 0) ? 0.20f : 0.13f;
+                int bs = barStart + n * eighth;
+                int len = Mathf.RoundToInt(eighth * 0.7f);
+                float freq = (n % 4 == 2) ? bass * 2f : bass;
+                float amp = (n % 2 == 0) ? 0.16f : 0.10f;
+
                 for (int i = 0; i < len && bs + i < total; i++)
                 {
                     float t = i / (float)Rate;
-                    float env = Mathf.Exp(-3.2f * t) * Mathf.Min(1f, t * 90f);
-                    float v = Mathf.Sin(2f * Mathf.PI * bass * t)
-                            + Mathf.Sin(2f * Mathf.PI * bass * 2f * t) * 0.35f;
+                    float env = Mathf.Exp(-9f * t) * Mathf.Min(1f, t * 200f);
+                    float v = Mathf.Sin(2f * Mathf.PI * freq * t)
+                            + Mathf.Sin(2f * Mathf.PI * freq * 2f * t) * 0.3f;
                     data[bs + i] += v * env * amp;
                 }
             }
 
-            // ---- 旋律（八分音符，带休止）----
             for (int n = 0; n < 8; n++)
             {
                 int idx = (n + bar * 8) % melody.Length;
@@ -149,49 +146,59 @@ public class AudioManager : MonoBehaviour
 
                 float freq = scale[melody[idx]];
                 int ms = barStart + n * eighth;
-                int len = Mathf.RoundToInt(eighth * 0.9f);
-                float amp = 0.14f;
+                int len = Mathf.RoundToInt(eighth * 0.85f);
 
                 for (int i = 0; i < len && ms + i < total; i++)
                 {
                     float t = i / (float)Rate;
-                    float env = Mathf.Exp(-4.5f * t) * Mathf.Min(1f, t * 120f);
-                    float v = Mathf.Sin(2f * Mathf.PI * freq * t) * 0.8f
-                            + Mathf.Sin(2f * Mathf.PI * freq * 2f * t) * 0.15f;
-                    data[ms + i] += v * env * amp;
+                    float env = Mathf.Exp(-6.5f * t) * Mathf.Min(1f, t * 250f);
+                    float v = Mathf.Sin(2f * Mathf.PI * freq * t) * 0.75f
+                            + Mathf.Sin(2f * Mathf.PI * freq * 2f * t) * 0.22f
+                            + Mathf.Sin(2f * Mathf.PI * freq * 3f * t) * 0.08f;
+                    data[ms + i] += v * env * 0.13f;
                 }
             }
 
-            // ---- 轻打击：底鼓 + 沙锤 ----
             for (int b = 0; b < beatsPerBar; b++)
             {
                 int ks = Mathf.RoundToInt((bar * beatsPerBar + b) * beat * Rate);
+
                 if (b == 0 || b == 2)
                 {
-                    int len = Mathf.RoundToInt(0.16f * Rate);
+                    int len = Mathf.RoundToInt(0.14f * Rate);
                     for (int i = 0; i < len && ks + i < total; i++)
                     {
                         float t = i / (float)Rate;
-                        float env = Mathf.Exp(-22f * t);
-                        float freq = 70f - 25f * t;    // 轻微下滑
-                        data[ks + i] += Mathf.Sin(2f * Mathf.PI * freq * t) * env * 0.16f;
+                        float env = Mathf.Exp(-26f * t);
+                        float freq = 85f - 30f * t;
+                        data[ks + i] += Mathf.Sin(2f * Mathf.PI * freq * t) * env * 0.17f;
                     }
                 }
 
-                // 反拍沙锤（噪声 + 极短包络）
-                int sh = Mathf.RoundToInt((bar * beatsPerBar + b + 0.5f) * beat * Rate);
-                int shLen = Mathf.RoundToInt(0.045f * Rate);
-                for (int i = 0; i < shLen && sh + i < total; i++)
+                if (b == 1 || b == 3)
+                {
+                    int len = Mathf.RoundToInt(0.09f * Rate);
+                    for (int i = 0; i < len && ks + i < total; i++)
+                    {
+                        float t = i / (float)Rate;
+                        float env = Mathf.Exp(-30f * t);
+                        float n2 = (float)(rng.NextDouble() * 2.0 - 1.0);
+                        data[ks + i] += n2 * env * 0.07f;
+                    }
+                }
+
+                int hs = Mathf.RoundToInt((bar * beatsPerBar + b + 0.5f) * beat * Rate);
+                int hLen = Mathf.RoundToInt(0.04f * Rate);
+                for (int i = 0; i < hLen && hs + i < total; i++)
                 {
                     float t = i / (float)Rate;
-                    float env = Mathf.Exp(-45f * t);
-                    float n = (float)(rng.NextDouble() * 2.0 - 1.0);
-                    data[sh + i] += n * env * 0.05f;
+                    float env = Mathf.Exp(-55f * t);
+                    float n2 = (float)(rng.NextDouble() * 2.0 - 1.0);
+                    data[hs + i] += n2 * env * 0.045f;
                 }
             }
         }
 
-        // 归一化 + 首尾淡入淡出，保证循环不爆音
         float peak = 0.0001f;
         for (int i = 0; i < total; i++) peak = Mathf.Max(peak, Mathf.Abs(data[i]));
         float gain = 0.85f / peak;

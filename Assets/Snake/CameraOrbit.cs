@@ -17,8 +17,8 @@ public class CameraOrbit : MonoBehaviour
 
     [Header("相机视锥（四棱台）")]
     public float cameraFov = 80f;      // 垂直张角，越大看得越广
-    public float nearClip = 0.05f;     // 近平面，越小越贴近相机
-    public float farClip = 5000f;      // 远平面，越大看得越远
+    public float nearClip = 0.1f;      // 近平面
+    public float farClip = 300f;       // 远平面（场景很小，不需要 5000，收小能提高深度精度）
 
     [Header("自由视角")]
     public float distance = 16f;
@@ -35,6 +35,15 @@ public class CameraOrbit : MonoBehaviour
     private bool yawInitialized;
     private float currentYaw, currentPitch;
     private int lastGridSize = -1;
+    private float menuYaw;
+    private float demoTimer;
+    private float demoYaw = 30f;
+    private float demoPitch = 30f;
+    private float demoDist = 18f;
+    private float tYaw = 30f, tPitch = 30f, tDist = 18f;
+    private float shakeTime;
+    private float shakeStrength;
+    private float baseFov = -1f;
 
     void Start()
     {
@@ -86,8 +95,90 @@ public class CameraOrbit : MonoBehaviour
 
     void LateUpdate()
     {
+
+        if (game != null && game.state == SnakeGame.GameState.Menu && game.DemoActive)
+        {
+            UpdateDemoCam();
+            ApplyShakeAndFov();
+            return;
+        }
+
         if (GameSettings.FixedView) UpdateFixed();
         else UpdateFree();
+
+        ApplyShakeAndFov();
+    }
+
+    void UpdateDemoCam()
+    {
+        demoTimer += Time.deltaTime;
+
+        // 每 12 秒换一个视角
+        if (demoTimer >= 12f)
+        {
+            demoTimer = 0f;
+            tYaw += Random.Range(60f, 140f);
+            tPitch = Random.Range(12f, 52f);
+            tDist = Random.Range(14f, 24f);
+        }
+
+        demoYaw = Mathf.LerpAngle(demoYaw, tYaw, 1f - Mathf.Exp(-1.2f * Time.deltaTime));
+        demoPitch = Mathf.Lerp(demoPitch, tPitch, 1f - Mathf.Exp(-1.2f * Time.deltaTime));
+        demoDist = Mathf.Lerp(demoDist, tDist, 1f - Mathf.Exp(-1.2f * Time.deltaTime));
+
+        Vector3 center = Vector3.zero;
+        Quaternion rot = Quaternion.Euler(demoPitch, demoYaw, 0f);
+        transform.position = center + rot * Vector3.back * demoDist;
+        transform.rotation = rot;
+    }
+
+    /// <summary>外部触发：撞墙/撞身体时抖一下。</summary>
+    public void Shake(float strength = 0.22f, float duration = 0.25f)
+    {
+        shakeStrength = strength;
+        shakeTime = duration;
+    }
+
+    void ApplyShakeAndFov()
+    {
+        var cam = GetComponent<Camera>();
+        if (cam == null) return;
+
+        if (baseFov < 0f) baseFov = cam.fieldOfView;
+
+        // 加速时 FOV 略微放大，营造速度感
+        float targetFov = baseFov;
+        if (game != null && game.IsBoosting && game.state == SnakeGame.GameState.Playing)
+            targetFov = baseFov + 4f;
+
+        cam.fieldOfView = Mathf.Lerp(cam.fieldOfView, targetFov, 1f - Mathf.Exp(-6f * Time.deltaTime));
+
+        // 震动：随机偏移衰减
+        if (shakeTime > 0f)
+        {
+            shakeTime -= Time.deltaTime;
+            float k = Mathf.Clamp01(shakeTime / 0.25f);
+            Vector3 offset = Random.insideUnitSphere * shakeStrength * k;
+            transform.position += offset;
+        }
+    }
+
+    /// <summary>菜单：缓慢环绕中心，展示装饰立方体。</summary>
+    void UpdateMenuCam()
+    {
+        menuYaw += Time.deltaTime * 6f;      // 每秒 6°
+        Quaternion rot = Quaternion.Euler(18f, menuYaw, 0f);
+        Vector3 center = new Vector3(0f, 0.5f, 0f);
+        Vector3 desired = center + rot * new Vector3(0f, 0f, -16f);
+
+        float k = 1f - Mathf.Exp(-4f * Time.deltaTime);
+        if (transform.position.magnitude < 0.01f) transform.position = desired;
+        else transform.position = Vector3.Lerp(transform.position, desired, k);
+
+        Vector3 look = center - transform.position;
+        if (look.sqrMagnitude > 0.0001f)
+            transform.rotation = Quaternion.Slerp(transform.rotation,
+                Quaternion.LookRotation(look.normalized, Vector3.up), k);
     }
 
     // ---------------- 固定视角 ----------------
@@ -96,8 +187,9 @@ public class CameraOrbit : MonoBehaviour
         if (game == null) game = FindObjectOfType<SnakeGame>();
         if (game == null) return;
 
-        // 滚轮调远近
-        float scroll = Input.GetAxis("Mouse ScrollWheel");
+        // 滚轮调远近（只在游戏进行中生效，菜单里不抢滚轮）
+        bool playing = game != null && game.state == SnakeGame.GameState.Playing;
+        float scroll = playing ? Input.GetAxis("Mouse ScrollWheel") : 0f;
         if (Mathf.Abs(scroll) > 0.0001f)
         {
             followDistance -= scroll * zoomSpeed;
@@ -140,14 +232,15 @@ public class CameraOrbit : MonoBehaviour
         bool overUI = UnityEngine.EventSystems.EventSystem.current != null &&
                       UnityEngine.EventSystems.EventSystem.current.IsPointerOverGameObject();
 
-        if (Input.GetMouseButton(0) && !overUI)
+        bool playing = game != null && game.state == SnakeGame.GameState.Playing;
+        if (playing && Input.GetMouseButton(0) && !overUI)
         {
             currentYaw += Input.GetAxis("Mouse X") * rotateSpeed;
             currentPitch -= Input.GetAxis("Mouse Y") * rotateSpeed;
             currentPitch = Mathf.Clamp(currentPitch, -85f, 85f);
         }
 
-        float scroll = Input.GetAxis("Mouse ScrollWheel");
+        float scroll = playing ? Input.GetAxis("Mouse ScrollWheel") : 0f;
         if (Mathf.Abs(scroll) > 0.0001f)
             distance = Mathf.Clamp(distance - scroll * zoomSpeed, minDistance, maxDistance);
 

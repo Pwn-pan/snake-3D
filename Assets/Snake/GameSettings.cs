@@ -11,6 +11,9 @@ public static class GameSettings
     private const string K_VIEW = "snake.fixedView";
     private const string K_CAM = "snake.cameraSmoothing";
     private const string K_NAME = "snake.playerName";
+    private const string K_HEAD = "snake.headColor";
+    private const string K_BODY = "snake.bodyColor";
+    private const string K_OUTLINE = "snake.outlineColor";
     private const string K_MAP = "snake.mapSize";
     private const string K_DIFF = "snake.difficulty";
 
@@ -56,6 +59,34 @@ public static class GameSettings
     /// <summary>目标分数占总格数的比例。</summary>
     public static float DifficultyPercent =>
         Difficulty == 0 ? 0.20f : Difficulty == 1 ? 0.30f : 0.50f;
+
+    private static Color GetColor(string key, Color fallback)
+    {
+        string hex = PlayerPrefs.GetString(key, "");
+        if (string.IsNullOrEmpty(hex)) return fallback;
+        return ColorUtility.TryParseHtmlString(hex, out var c) ? c : fallback;
+    }
+
+    private static void SetColor(string key, Color c) =>
+        PlayerPrefs.SetString(key, "#" + ColorUtility.ToHtmlStringRGB(c));
+
+    public static Color HeadColor
+    {
+        get => GetColor(K_HEAD, new Color(0.52f, 0.90f, 0.62f));
+        set { SetColor(K_HEAD, value); PlayerPrefs.Save(); }
+    }
+
+    public static Color BodyColor
+    {
+        get => GetColor(K_BODY, new Color(0.30f, 0.66f, 0.88f));
+        set { SetColor(K_BODY, value); PlayerPrefs.Save(); }
+    }
+
+    public static Color OutlineColor
+    {
+        get => GetColor(K_OUTLINE, new Color(0.85f, 0.16f, 0.16f));
+        set { SetColor(K_OUTLINE, value); PlayerPrefs.Save(); }
+    }
 
     /// <summary>玩家昵称（排行榜显示用）。</summary>
     public static string PlayerName
