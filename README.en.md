@@ -11,7 +11,7 @@ A snake game that lives in a cube — you can move forward, sideways, **and up a
 
 Windows 64-bit build (unzip and run `Snake3D.exe` — Unity is not required):
 
-**[Download v0.9](https://github.com/Pwn-pan/snake-3D/releases/latest)** (25 MB)
+**[Download v1.0](https://github.com/Pwn-pan/snake-3D/releases/latest)** (25 MB)
 
 Requirements: Windows 10 / 11 (64-bit) and a DX11-capable GPU. **No Unity installation or runtime is required.**
 
