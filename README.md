@@ -11,7 +11,7 @@
 
 Windows 64 位（解压后双击 `Snake3D.exe`，无需安装 Unity）：
 
-**[下载 v1.0](https://github.com/Pwn-pan/snake-3D/releases/latest)**（25 MB）
+**[下载 v1.1](https://github.com/Pwn-pan/snake-3D/releases/latest)**（25 MB）
 
 ## 玩法
 
