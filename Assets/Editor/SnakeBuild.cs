@@ -43,6 +43,7 @@ public static class SnakeBuild
         game.AddComponent<SnakeGame>();
         game.AddComponent<MenuUI>();
         game.AddComponent<AudioManager>();
+        game.AddComponent<LeaderboardClient>();
 
         Directory.CreateDirectory("Assets/Scenes");
         EditorSceneManager.SaveScene(scene, ScenePath);

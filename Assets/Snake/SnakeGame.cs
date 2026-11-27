@@ -38,6 +38,7 @@ public class SnakeGame : MonoBehaviour
     public bool blockedByWall { get; private set; }
     public bool paused { get; private set; }
     public bool targetReached => score >= targetScore;
+    public float runSeconds { get; private set; }
     public bool won { get; private set; }
 
     public Vector3 HeadWorldPosition => views.Count > 0 ? views[0].transform.position : transform.position;
@@ -248,6 +249,7 @@ public class SnakeGame : MonoBehaviour
             return;
         }
 
+        runSeconds += Time.deltaTime;
         timer += Time.deltaTime / interval;
 
         if (timer >= 1f)
@@ -271,6 +273,7 @@ public class SnakeGame : MonoBehaviour
         isBoosting = false;
         won = false;
         wasBoosting = false;
+        runSeconds = 0f;
         dir = Vector3Int.right;
         verticalMode = 0;
         faceDir = Vector3Int.right;

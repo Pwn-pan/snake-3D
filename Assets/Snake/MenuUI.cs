@@ -11,9 +11,13 @@ public class MenuUI : MonoBehaviour
     private SnakeGame game;
     private Font font;
 
-    private GameObject menuPanel, settingsPanel, hudPanel, overPanel, countdownObj, pausePanel, difficultyPanel, mapPanel;
+    private GameObject menuPanel, settingsPanel, hudPanel, overPanel, countdownObj, pausePanel, difficultyPanel, mapPanel, leaderboardPanel;
     private Text scoreText, overScoreText, countdownText, overTitle;
     private Text bgmLabel, sfxLabel, speedLabel, viewLabel, camLabel;
+    private Text lbListText, lbStatusText, lbDiffText, lbMapText, lbNameStatus;
+    private int lbDifficulty = 2, lbMap = 5;
+    private InputField lbNameInput;
+    private bool submitQueued;
     private Slider bgmSlider, sfxSlider, speedSlider, camSlider;
 
     private int lastCountdownStep = -1;
@@ -69,6 +73,12 @@ public class MenuUI : MonoBehaviour
         pausePanel.SetActive(playing && game.paused);
         scoreText.text = $"得分  {game.score} / {game.targetScore}" + (game.targetReached ? "　✔ 目标达成" : "");
 
+        if (game.state == SnakeGame.GameState.GameOver && !submitQueued)
+        {
+            submitQueued = true;
+            SubmitScore(game.score, game.runSeconds);
+        }
+
         if (game.state == SnakeGame.GameState.GameOver && !overPanel.activeSelf)
         {
             overPanel.SetActive(true);
@@ -78,6 +88,18 @@ public class MenuUI : MonoBehaviour
                 ? new Color(1f, 0.86f, 0.35f)
                 : new Color(1f, 0.55f, 0.55f);
         }
+    }
+
+    async void SubmitScore(int score, float seconds)
+    {
+        if (GameSettings.Difficulty != 2) return;   // 只有困难模式上榜
+        var client = LeaderboardClient.Instance;
+        if (client == null) return;
+
+        bool ok = await client.SubmitAsync(GameSettings.Difficulty, GameSettings.MapSize, score, seconds);
+        Debug.Log(ok
+            ? $"[排行榜] 已提交 {score} 分（{seconds:0.0}s）"
+            : "[排行榜] 提交失败：" + client.Error);
     }
 
     // ---------------- 按钮响应 ----------------
@@ -93,6 +115,74 @@ public class MenuUI : MonoBehaviour
         if (pausePanel != null) pausePanel.SetActive(false);
         if (difficultyPanel != null) difficultyPanel.SetActive(false);
         if (mapPanel != null) mapPanel.SetActive(false);
+        if (leaderboardPanel != null) leaderboardPanel.SetActive(false);
+    }
+
+    void OpenLeaderboard()
+    {
+        menuPanel.SetActive(false);
+        settingsPanel.SetActive(false);
+        leaderboardPanel.SetActive(true);
+        lbDifficulty = 2;   // 只做困难榜
+        if (lbNameInput != null) lbNameInput.text = GameSettings.PlayerName;
+        lbMap = GameSettings.MapSize;
+        RefreshLeaderboard();
+    }
+
+    async void RefreshLeaderboard()
+    {
+        lbDiffText.text = "难度：困难（仅困难模式有排行榜）";
+        lbMapText.text = $"地图：{lbMap}×{lbMap}×{lbMap}";
+        lbListText.text = "加载中…";
+        lbStatusText.text = "";
+
+        var client = LeaderboardClient.Instance;
+        if (client == null)
+        {
+            lbStatusText.text = "排行榜未初始化（场景里缺少 LeaderboardClient）";
+            lbListText.text = "";
+            return;
+        }
+
+        // 云端没配也能用本地榜，不拦
+
+        var entries = await client.TopAsync(lbDifficulty, lbMap, 10);
+        if (entries == null)
+        {
+            lbListText.text = "";
+            lbStatusText.text = "读取失败：" + (string.IsNullOrEmpty(client.Error) ? "未知错误" : client.Error);
+            return;
+        }
+        if (entries.Count == 0)
+        {
+            lbListText.text = "";
+            lbStatusText.text = "这个榜单还没有成绩";
+            return;
+        }
+
+        var sb = new System.Text.StringBuilder();
+        foreach (var e in entries)
+        {
+            string name = string.IsNullOrEmpty(e.name) ? "匿名玩家" : e.name;
+            sb.AppendLine($"{e.rank,2}.  {name,-12} {e.score,4} 分　{e.seconds:0} 秒");
+        }
+        lbListText.text = sb.ToString();
+        lbStatusText.text = $"共 {entries.Count} 条 · {client.LastSource}榜";
+    }
+
+    async void SaveNickname()
+    {
+        var client = LeaderboardClient.Instance;
+        if (client == null) { lbNameStatus.text = "排行榜未初始化"; return; }
+
+        string raw = lbNameInput != null ? lbNameInput.text : "";
+        string clean = LeaderboardClient.Sanitize(raw);
+        if (string.IsNullOrEmpty(clean)) { lbNameStatus.text = "昵称不能为空"; return; }
+
+        lbNameStatus.text = "保存中…";
+        bool ok = await client.SetPlayerNameAsync(clean);
+        lbNameStatus.text = ok ? "已保存：" + clean : "保存失败：" + client.Error;
+        if (ok) RefreshLeaderboard();
     }
 
     void ShowDifficulty()
@@ -118,7 +208,9 @@ public class MenuUI : MonoBehaviour
         overPanel.SetActive(false);
         difficultyPanel.SetActive(false);
         mapPanel.SetActive(false);
+        if (leaderboardPanel != null) leaderboardPanel.SetActive(false);
         if (pausePanel != null) pausePanel.SetActive(false);
+        submitQueued = false;
         game.StartGame();
     }
 
@@ -180,6 +272,7 @@ public class MenuUI : MonoBehaviour
 
         Button(menuPanel.transform, "开始游戏", new Vector2(0, -20), ShowDifficulty);
         Button(menuPanel.transform, "设置", new Vector2(0, -140), OpenSettings);
+        Button(menuPanel.transform, "排行榜", new Vector2(0, -260), OpenLeaderboard);
 
         // ---- 设置 ----
         settingsPanel = Panel(canvasGo.transform, "Settings");
@@ -225,6 +318,30 @@ public class MenuUI : MonoBehaviour
         });
 
         Button(settingsPanel.transform, "返回", new Vector2(0, -400), CloseSettings);
+
+        // ---- 排行榜 ----
+        leaderboardPanel = Panel(canvasGo.transform, "Leaderboard");
+        Label(leaderboardPanel.transform, "排行榜", 72, new Vector2(0, 400), new Vector2(900, 110), FontStyle.Bold, Color.white);
+
+        lbDiffText = Label(leaderboardPanel.transform, "难度：困难（仅困难模式有排行榜）", 28, new Vector2(-380, 350), new Vector2(700, 45), FontStyle.Normal, new Color(1f, 0.86f, 0.35f), TextAnchor.MiddleLeft);
+
+        // 昵称
+        lbNameInput = InputField(leaderboardPanel.transform, new Vector2(-120, 285), new Vector2(420, 56), "输入昵称（最多 16 字）", GameSettings.PlayerName);
+        Button(leaderboardPanel.transform, "保存昵称", new Vector2(230, 285), SaveNickname, 220f);
+        lbNameStatus = Label(leaderboardPanel.transform, "", 22, new Vector2(0, 240), new Vector2(1200, 36), FontStyle.Normal, new Color(0.8f, 0.85f, 0.8f));
+
+        lbMapText = Label(leaderboardPanel.transform, "地图：5×5×5", 30, new Vector2(-380, 185), new Vector2(420, 45), FontStyle.Normal, Color.white, TextAnchor.MiddleLeft);
+        Button(leaderboardPanel.transform, "切地图", new Vector2(200, 185), () =>
+        {
+            lbMap = lbMap == 3 ? 5 : lbMap == 5 ? 7 : 3;
+            RefreshLeaderboard();
+        }, 240f);
+
+        lbListText = Label(leaderboardPanel.transform, "加载中…", 30, new Vector2(0, -30), new Vector2(1200, 340), FontStyle.Normal, new Color(0.9f, 0.95f, 1f), TextAnchor.UpperLeft);
+        lbStatusText = Label(leaderboardPanel.transform, "", 24, new Vector2(0, -250), new Vector2(1200, 60), FontStyle.Normal, new Color(0.8f, 0.8f, 0.8f), TextAnchor.MiddleCenter);
+
+        Button(leaderboardPanel.transform, "刷新", new Vector2(-200, -340), RefreshLeaderboard, 240f);
+        Button(leaderboardPanel.transform, "返回", new Vector2(200, -340), ShowMenu, 240f);
 
         // ---- 难度选择 ----
         difficultyPanel = Panel(canvasGo.transform, "Difficulty");
@@ -342,6 +459,46 @@ public class MenuUI : MonoBehaviour
         t.horizontalOverflow = HorizontalWrapMode.Overflow;
         t.verticalOverflow = VerticalWrapMode.Overflow;
         return t;
+    }
+
+    private InputField InputField(Transform parent, Vector2 pos, Vector2 size, string placeholder, string initial)
+    {
+        var go = new GameObject("Input", typeof(RectTransform), typeof(Image), typeof(InputField));
+        go.transform.SetParent(parent, false);
+        var rt = go.GetComponent<RectTransform>();
+        rt.anchorMin = rt.anchorMax = new Vector2(0.5f, 0.5f);
+        rt.anchoredPosition = pos;
+        rt.sizeDelta = size;
+
+        go.GetComponent<Image>().color = new Color(0.10f, 0.13f, 0.16f, 0.95f);
+
+        var textGo = new GameObject("Text", typeof(RectTransform), typeof(Text));
+        textGo.transform.SetParent(go.transform, false);
+        var trt = textGo.GetComponent<RectTransform>();
+        trt.anchorMin = Vector2.zero; trt.anchorMax = Vector2.one;
+        trt.offsetMin = new Vector2(12, 6); trt.offsetMax = new Vector2(-12, -6);
+        var t = textGo.GetComponent<Text>();
+        t.font = font; t.fontSize = 28; t.color = Color.white;
+        t.alignment = TextAnchor.MiddleLeft;
+        t.supportRichText = false;
+
+        var phGo = new GameObject("Placeholder", typeof(RectTransform), typeof(Text));
+        phGo.transform.SetParent(go.transform, false);
+        var prt = phGo.GetComponent<RectTransform>();
+        prt.anchorMin = Vector2.zero; prt.anchorMax = Vector2.one;
+        prt.offsetMin = new Vector2(12, 6); prt.offsetMax = new Vector2(-12, -6);
+        var ph = phGo.GetComponent<Text>();
+        ph.font = font; ph.fontSize = 26; ph.color = new Color(0.6f, 0.65f, 0.7f);
+        ph.alignment = TextAnchor.MiddleLeft;
+        ph.text = placeholder;
+
+        var input = go.GetComponent<InputField>();
+        input.textComponent = t;
+        input.placeholder = ph;
+        input.targetGraphic = go.GetComponent<Image>();
+        input.characterLimit = 16;
+        input.text = initial ?? "";
+        return input;
     }
 
     private Slider Slider(Transform parent, Vector2 pos, float min, float max, float value, System.Action<float> onChange)

@@ -10,6 +10,7 @@ public static class GameSettings
     private const string K_SPEED = "snake.moveInterval";
     private const string K_VIEW = "snake.fixedView";
     private const string K_CAM = "snake.cameraSmoothing";
+    private const string K_NAME = "snake.playerName";
     private const string K_MAP = "snake.mapSize";
     private const string K_DIFF = "snake.difficulty";
 
@@ -55,6 +56,13 @@ public static class GameSettings
     /// <summary>目标分数占总格数的比例。</summary>
     public static float DifficultyPercent =>
         Difficulty == 0 ? 0.20f : Difficulty == 1 ? 0.30f : 0.50f;
+
+    /// <summary>玩家昵称（排行榜显示用）。</summary>
+    public static string PlayerName
+    {
+        get => PlayerPrefs.GetString(K_NAME, "");
+        set { PlayerPrefs.SetString(K_NAME, value ?? ""); PlayerPrefs.Save(); }
+    }
 
     /// <summary>镜头跟随速度：越小越稳（拖沓），越大越跟手（容易晃）。</summary>
     public static float CameraSmoothing
