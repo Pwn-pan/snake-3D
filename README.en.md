@@ -13,7 +13,7 @@ Windows 64-bit build (unzip and run `Snake3D.exe` — Unity is not required):
 
 | Version | Highlights | Download |
 |---|---|---|
-| **v1.3** | Skin system, Laoda theme (face texture / iced tea / custom SFX), second-person camera, translucent UI | **[Download](https://github.com/Pwn-pan/snake-3D/releases/download/v1.3/3D._v1.3.zip)** (27 MB) |
+| **v1.3** | Skin system, Laoda theme (face texture / iced tea / custom SFX), second-person camera, translucent UI | **[Download](https://github.com/Pwn-pan/snake-3D/releases/download/v1.3/3Dsnake_v1.3.zip)** (28 MB) |
 | v1.1 | Cloud leaderboard, nickname, audio volume control | [Download](https://github.com/Pwn-pan/snake-3D/releases/download/v1.1/3D._v11_.zip) (26 MB) |
 | v1.0 | Difficulty & map selection, pause, game-over screen | [Download](https://github.com/Pwn-pan/snake-3D/releases/download/v1.0/3D._v10_.zip) (26 MB) |
 | v0.9 | First playable version | [Download](https://github.com/Pwn-pan/snake-3D/releases/download/v0.9/3D._v9_.zip) (25 MB) |
