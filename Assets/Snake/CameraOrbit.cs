@@ -10,7 +10,8 @@ public class CameraOrbit : MonoBehaviour
 {
     [Header("固定视角")]
     public float followDistance = 7f;     // 相机到蛇头的水平距离
-    public float followHeight = 3.5f;     // 相机高度
+    public float followHeight = 3.5f;     // 相机高度（初始值，之后由 followPitch 推导）
+    public float followPitch = 26f;       // 固定俯角（滚轮只改距离，俯角不变）
     public float followSmoothing = 4.5f;  // 平滑度（越大跟得越紧）
     public float followMin = 0.2f;        // 可以无限近（只保留一个安全值）
     public float followMax = 20f;         // 滚轮最远
@@ -39,16 +40,26 @@ public class CameraOrbit : MonoBehaviour
     private float demoTimer;
     private float demoYaw = 30f;
     private float demoPitch = 30f;
-    private float demoDist = 18f;
-    private float tYaw = 30f, tPitch = 30f, tDist = 18f;
+    private float demoDist = 6f;
+    public float demoRotateSpeed = 22f;   // 演示视角持续旋转速度（度/秒）
+    private float tYaw = 30f, tPitch = 28f, tDist = 6f;
     private float shakeTime;
     private float shakeStrength;
     private float baseFov = -1f;
+    private bool frontView;          // 第二人称：相机在蛇头前方
+    private float orbitDist = -1f;   // 圆轨道半径（平滑用）
+    private float orbitHeight = -1f; // 圆轨道高度（平滑用）
+    private bool wasFrontView;       // 上一帧是否处在第二人称
+    private SnakeGame.GameState lastState = SnakeGame.GameState.Menu;
 
     void Start()
     {
         followMin = 0.2f;    // 强制覆盖：场景里存的是旧值 3
         followMax = Mathf.Max(2f, followMax);
+
+        // 固定俯角（不用场景旧值反推，避免被覆盖）
+        followPitch = 45f;
+        followHeight = followDistance * Mathf.Tan(followPitch * Mathf.Deg2Rad);
 
         // 应用视锥参数
         var cam = GetComponent<Camera>();
@@ -57,6 +68,7 @@ public class CameraOrbit : MonoBehaviour
             cam.fieldOfView = cameraFov;
             cam.nearClipPlane = nearClip;
             cam.farClipPlane = farClip;
+            baseFov = cameraFov;
         }
 
         game = FindObjectOfType<SnakeGame>();
@@ -96,12 +108,14 @@ public class CameraOrbit : MonoBehaviour
     void LateUpdate()
     {
 
-        if (game != null && game.state == SnakeGame.GameState.Menu && game.DemoActive)
+        if (game != null && game.state == SnakeGame.GameState.Menu)
         {
             UpdateDemoCam();
             ApplyShakeAndFov();
             return;
         }
+
+        lastState = game != null ? game.state : SnakeGame.GameState.Menu;
 
         if (GameSettings.FixedView) UpdateFixed();
         else UpdateFree();
@@ -111,20 +125,47 @@ public class CameraOrbit : MonoBehaviour
 
     void UpdateDemoCam()
     {
+        // 从游戏回到菜单：立刻换成演示视角，不沿用玩家长时间调过的角度
+        if (lastState != SnakeGame.GameState.Menu)
+        {
+            demoYaw = tYaw = Random.Range(20f, 340f);
+            demoPitch = tPitch = Random.Range(18f, 42f);
+            demoDist = tDist = 6f;
+            demoTimer = 0f;
+
+            // 恢复镜头基准：缩放与 FOV 都回默认，避免沿用游戏里的放大
+            var camRef = GetComponent<Camera>();
+            if (camRef != null) camRef.fieldOfView = cameraFov;
+            distance = game != null ? Mathf.Clamp(game.gridSize * 2.6f, minDistance, maxDistance) : distance;
+            followDistance = Mathf.Clamp(followDistance, followMin, followMax);
+        }
+        lastState = SnakeGame.GameState.Menu;
+
         demoTimer += Time.deltaTime;
 
-        // 每 12 秒换一个视角
-        if (demoTimer >= 12f)
+        // 相机持续缓慢环绕
+        tYaw += demoRotateSpeed * Time.deltaTime;
+
+        // 每 12 秒换一次俯角/距离
+        if (demoTimer >= 10f)
         {
             demoTimer = 0f;
-            tYaw += Random.Range(60f, 140f);
-            tPitch = Random.Range(12f, 52f);
-            tDist = Random.Range(14f, 24f);
-        }
+            tYaw += Random.Range(60f, 200f);
+            tPitch = Random.Range(-12f, 72f);    // 幅度更大：从仰视到近俯视
+            tDist = 8f;   // 预览距离固定 8
 
-        demoYaw = Mathf.LerpAngle(demoYaw, tYaw, 1f - Mathf.Exp(-1.2f * Time.deltaTime));
-        demoPitch = Mathf.Lerp(demoPitch, tPitch, 1f - Mathf.Exp(-1.2f * Time.deltaTime));
-        demoDist = Mathf.Lerp(demoDist, tDist, 1f - Mathf.Exp(-1.2f * Time.deltaTime));
+            // 瞬间切换，不要过渡
+            demoYaw = tYaw;
+            demoPitch = tPitch;
+            demoDist = tDist;
+
+            Debug.Log($"[演示相机] 瞬切 yaw={tYaw:0} pitch={tPitch:0} dist={tDist:0.0}");
+        }
+        else
+        {
+            // 两次切换之间只缓慢环绕
+            demoYaw = Mathf.LerpAngle(demoYaw, tYaw, 1f - Mathf.Exp(-3.5f * Time.deltaTime));
+        }
 
         Vector3 center = Vector3.zero;
         Quaternion rot = Quaternion.Euler(demoPitch, demoYaw, 0f);
@@ -187,41 +228,81 @@ public class CameraOrbit : MonoBehaviour
         if (game == null) game = FindObjectOfType<SnakeGame>();
         if (game == null) return;
 
-        // 滚轮调远近（只在游戏进行中生效，菜单里不抢滚轮）
-        bool playing = game != null && game.state == SnakeGame.GameState.Playing;
+        // 倒计时阶段也能调视角
+        bool playing = game.state == SnakeGame.GameState.Playing ||
+                       game.state == SnakeGame.GameState.Countdown;
+
+        // 按住左键 → 第二人称（相机到蛇头前上方）
+        if (playing)
+        {
+            if (Input.GetMouseButtonDown(0)) frontView = true;
+            if (Input.GetMouseButtonUp(0)) frontView = false;
+        }
+        else frontView = false;
+
+        // 滚轮调远近
         float scroll = playing ? Input.GetAxis("Mouse ScrollWheel") : 0f;
         if (Mathf.Abs(scroll) > 0.0001f)
         {
             followDistance -= scroll * zoomSpeed;
-            if (followDistance > followMax) followDistance = followMax;
-            if (followDistance < 0.05f) followDistance = 0.05f;
+            followDistance = Mathf.Clamp(followDistance, followMin, followMax);
+
+            // 只改距离：高度随距离等比变化，保持俯角恒定
+            followHeight = followDistance * Mathf.Tan(followPitch * Mathf.Deg2Rad);
         }
 
         Vector3 head = game.HeadWorldPosition;
         Vector3 forward = game.HeadForward;
+        if (forward.sqrMagnitude < 0.001f) forward = Vector3.forward;
+        forward.Normalize();
 
-        // 目标环绕角：蛇头朝向的偏航角
+        // ---- 圆形轨道：前后两种视角都在同一个圆上，只是角度差 180° ----
         float targetYaw = Mathf.Atan2(forward.x, forward.z) * Mathf.Rad2Deg;
+        if (!yawInitialized) { smoothYaw = targetYaw; yawInitialized = true; }
 
-        if (!yawInitialized)
+        float desiredYaw = frontView ? targetYaw + 180f : targetYaw;
+
+        // 切到/切回第二人称时瞬间到位，不做过渡
+        bool switched = frontView != wasFrontView;
+        wasFrontView = frontView;
+
+        if (switched)
         {
-            smoothYaw = targetYaw;
-            yawInitialized = true;
+            smoothYaw = desiredYaw;
+        }
+        else
+        {
+            float smoothing = Mathf.Clamp(GameSettings.CameraSmoothing, 0.5f, 20f);
+            float degPerSec = 90f + smoothing * 30f;
+            smoothYaw = Mathf.MoveTowardsAngle(smoothYaw, desiredYaw, degPerSec * Time.deltaTime);
         }
 
-        // 旋转角速度：0.5 档 ≈ 105°/s，20 档 ≈ 690°/s
-        // 用固定角速度而不是指数插值，最大档也有 0.13 秒的过渡，不会瞬移
-        float smoothing = Mathf.Clamp(GameSettings.CameraSmoothing, 0.5f, 20f);
-        float degPerSec = 90f + smoothing * 30f;
-        smoothYaw = Mathf.MoveTowardsAngle(smoothYaw, targetYaw, degPerSec * Time.deltaTime);
+        // 距离与高度也平滑过渡
+        float targetDist = frontView
+            ? Mathf.Clamp(followDistance * 0.55f, 1.4f, 4f)
+            : followDistance;
 
-        // 圆形轨道：以蛇头为圆心，半径固定
+        float targetHeight = frontView ? followHeight * 0.75f : followHeight;   // 高度已随距离同步
+
+        if (switched)
+        {
+            orbitDist = targetDist;      // 距离/高度也瞬间到位
+            orbitHeight = targetHeight;
+        }
+        else
+        {
+            float k = 1f - Mathf.Exp(-6f * Time.deltaTime);
+            orbitDist = Mathf.Lerp(orbitDist < 0.01f ? targetDist : orbitDist, targetDist, k);
+            orbitHeight = Mathf.Lerp(orbitHeight < 0.01f ? targetHeight : orbitHeight, targetHeight, k);
+        }
+
+        // 相机始终在蛇头为中心、半径固定的圆上
         Quaternion orbit = Quaternion.Euler(0f, smoothYaw, 0f);
-        Vector3 offset = orbit * (Vector3.back * followDistance) + Vector3.up * followHeight;
-        transform.position = head + offset;
+        Vector3 pos = head + orbit * (Vector3.back * orbitDist) + Vector3.up * orbitHeight;
+        transform.position = pos;
 
-        // 始终看向蛇头 → 蛇头永远在屏幕中心
-        Vector3 lookDir = head - transform.position;
+        Vector3 lookAt = frontView ? head + Vector3.up * 0.25f : head;
+        Vector3 lookDir = lookAt - transform.position;
         if (lookDir.sqrMagnitude > 0.0001f)
             transform.rotation = Quaternion.LookRotation(lookDir.normalized, Vector3.up);
     }
@@ -232,15 +313,18 @@ public class CameraOrbit : MonoBehaviour
         bool overUI = UnityEngine.EventSystems.EventSystem.current != null &&
                       UnityEngine.EventSystems.EventSystem.current.IsPointerOverGameObject();
 
-        bool playing = game != null && game.state == SnakeGame.GameState.Playing;
-        if (playing && Input.GetMouseButton(0) && !overUI)
+        // 倒计时（321）阶段也允许调视角
+        bool canLook = game != null &&
+            (game.state == SnakeGame.GameState.Playing || game.state == SnakeGame.GameState.Countdown);
+
+        if (canLook && Input.GetMouseButton(0) && !overUI)
         {
             currentYaw += Input.GetAxis("Mouse X") * rotateSpeed;
             currentPitch -= Input.GetAxis("Mouse Y") * rotateSpeed;
             currentPitch = Mathf.Clamp(currentPitch, -85f, 85f);
         }
 
-        float scroll = playing ? Input.GetAxis("Mouse ScrollWheel") : 0f;
+        float scroll = canLook ? Input.GetAxis("Mouse ScrollWheel") : 0f;
         if (Mathf.Abs(scroll) > 0.0001f)
             distance = Mathf.Clamp(distance - scroll * zoomSpeed, minDistance, maxDistance);
 

@@ -94,7 +94,9 @@ public class SnakeGame : MonoBehaviour
     private readonly List<LineRenderer> layerEdges = new List<LineRenderer>();   // 层的外框
     private Light headLight;
     private Transform eyesRoot;
-    private Material eyeWhiteMat, eyePupilMat;
+    private Material eyeMat;
+    private Transform faceRoot;
+    private Color eyeColor = Color.black;
     private Material boundaryMat;
 
     private bool isBoosting;
@@ -174,7 +176,13 @@ public class SnakeGame : MonoBehaviour
     }
 
     /// <summary>纯色无光照材质：块与块之间没有明暗差异，整条蛇看起来是一个整体。</summary>
-    static Material MakeFlat(Color c)
+    static Material MakeHeadMat(Skin skin) =>
+        MakeFlat(skin.head, skin.pattern, skin.tiling);   // 脸用单独的贴片，头本身纯色
+
+    static Material MakeBodyMat(Skin skin) =>
+        MakeFlat(skin.body, skin.pattern, skin.tiling);
+
+    static Material MakeFlat(Color c, Texture2D pattern = null, float tiling = 1f)
     {
         // 世界法线着色：块与块之间不会出现明暗断层，同时有体积感
         var sh = Shader.Find("Snake/SoftShade");
@@ -186,7 +194,13 @@ public class SnakeGame : MonoBehaviour
 
         var m = new Material(sh);
         if (m.HasProperty("_Color")) m.color = c;
-        Debug.Log("[材质] 蛇身使用：" + (sh != null ? sh.name : "null"));
+
+        if (pattern != null)
+        {
+            if (m.HasProperty("_MainTex")) m.mainTexture = pattern;
+            if (m.HasProperty("_PatternAmt")) m.SetFloat("_PatternAmt", 1f);
+            if (m.HasProperty("_Tiling")) m.SetFloat("_Tiling", tiling);
+        }
         return m;
     }
 
@@ -222,13 +236,13 @@ public class SnakeGame : MonoBehaviour
     {
         if (setupLighting) SetupLighting();
 
-        // 读取玩家自定义颜色
-        headColor = GameSettings.HeadColor;
-        bodyColor = GameSettings.BodyColor;
+        // 读取皮肤
+        ApplySkinColors();
 
         // 纯色无光照：整条蛇是一块整色，块之间不会有明暗缝
-        headMat = MakeFlat(headColor);
-        bodyMat = MakeFlat(bodyColor);
+        var startSkin = Skins.Get(GameSettings.SkinIndex);
+        headMat = MakeHeadMat(startSkin);
+        bodyMat = MakeBodyMat(startSkin);
         foodMat = MakeMaterial(foodColor, 0.8f, 0.2f, foodColor);
         foodMat.EnableKeyword("_EMISSION");
         headMatBoost = MakeFlat(Color.Lerp(headColor, Color.white, 0.28f));
@@ -247,15 +261,31 @@ public class SnakeGame : MonoBehaviour
         if (outlineShader != null)
         {
             outlineMat = new Material(outlineShader);
-            outlineMat.SetColor("_Color", GameSettings.OutlineColor);
+            outlineMat.SetColor("_Color", Skins.Get(GameSettings.SkinIndex).outline);
         }
 
         BuildWorld();
+
+        // 进菜单就先跑演示
+        StartDemo();
+        Debug.Log("[演示] 菜单自动演示已启动");
     }
 
     void Update()
     {
         UpdateFx();
+
+        // 每只迷你蛇原地自转，相位错开
+        for (int i = 0; i < skinPreviewItems.Count; i++)
+        {
+            var item = skinPreviewItems[i];
+            if (item == null) continue;
+
+            item.localRotation = Quaternion.Euler(0f, Mathf.Sin(Time.time * 0.9f + i * 0.6f) * 18f, 0f);
+            item.localPosition = new Vector3(0f,
+                -(i - (skinPreviewItems.Count - 1) * 0.5f) * 2.5f + Mathf.Sin(Time.time * 1.6f + i) * 0.03f,
+                0f);
+        }
 
         switch (state)
         {
@@ -337,9 +367,117 @@ public class SnakeGame : MonoBehaviour
         ApplyVisuals(Mathf.Clamp01(timer));
     }
 
+    // ---------------- 皮肤预览（一张 RenderTexture 拍下十只迷你蛇） ----------------
+    public RenderTexture SkinPreviewRT { get; private set; }
+    private Transform skinPreviewRoot;
+    private readonly System.Collections.Generic.List<Transform> skinPreviewItems = new System.Collections.Generic.List<Transform>();
+
+    public void BuildSkinPreviews()
+    {
+        if (SkinPreviewRT != null) return;
+
+        int count = Skins.All.Length;
+        float spacing = 2.5f;
+
+        skinPreviewItems.Clear();
+
+        var rootGo = new GameObject("SkinPreviews");
+        skinPreviewRoot = rootGo.transform;
+        skinPreviewRoot.SetParent(transform, false);
+        skinPreviewRoot.position = new Vector3(1000f, -60f, 0f);   // 主相机远平面（300）之外
+
+        for (int i = 0; i < count; i++)
+        {
+            var skin = Skins.All[i];
+            var item = new GameObject("Prev" + i).transform;
+            item.SetParent(skinPreviewRoot, false);
+            item.localPosition = new Vector3(0f, -(i - (count - 1) * 0.5f) * spacing, 0f);
+            skinPreviewItems.Add(item);
+
+            var headMat = MakeHeadMat(skin);
+            var bodyMat = MakeBodyMat(skin);
+            var eyeMat = MakeFlat(skin.eye);
+            var outMat = new Material(Shader.Find("Snake/OutlineStencil"));
+            outMat.SetColor("_Color", skin.outline);
+
+            // 两节身体
+            for (int b = 1; b <= 2; b++)
+            {
+                var body = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                body.transform.SetParent(item, false);
+                body.transform.localPosition = new Vector3(-0.8f * b, 0f, 0f);
+                body.transform.localScale = Vector3.one * 0.8f;
+                body.GetComponent<Renderer>().sharedMaterial = bodyMat;
+                Destroy(body.GetComponent<Collider>());
+            }
+
+            // 头
+            var head = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            head.transform.SetParent(item, false);
+            head.transform.localPosition = Vector3.zero;
+            head.transform.localScale = Vector3.one * 0.8f;
+            head.GetComponent<Renderer>().sharedMaterial = headMat;
+            Destroy(head.GetComponent<Collider>());
+
+            // 脸贴片（只贴正面）
+            if (skin.face != null)
+            {
+                var faceQuad = GameObject.CreatePrimitive(PrimitiveType.Quad);
+                faceQuad.name = "FaceQuad";
+                faceQuad.transform.SetParent(item, false);
+                faceQuad.transform.localPosition = new Vector3(0f, 0f, 0.405f);
+                faceQuad.transform.localRotation = Quaternion.Euler(0f, 180f, 0f);
+                faceQuad.transform.localScale = new Vector3(0.77f, 0.77f, 1f);
+
+                var fm = MakeFlat(Color.white, skin.face, 1f);
+                if (fm.HasProperty("_UseTex")) fm.SetFloat("_UseTex", 1f);
+                if (fm.HasProperty("_PatternAmt")) fm.SetFloat("_PatternAmt", 0f);
+                faceQuad.GetComponent<Renderer>().sharedMaterial = fm;
+                Destroy(faceQuad.GetComponent<Collider>());
+            }
+
+            // 两只方形眼睛（没有眼睛的皮肤跳过）
+            for (int e = -1; e <= 1 && !skin.noEyes; e += 2)
+            {
+                var eye = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                eye.transform.SetParent(item, false);
+                eye.transform.localPosition = new Vector3(0.17f * e, 0.08f, 0.44f);
+                eye.transform.localScale = new Vector3(0.11f, 0.28f, 0.10f);   // 长条
+                eye.GetComponent<Renderer>().sharedMaterial = eyeMat;
+                Destroy(eye.GetComponent<Collider>());
+            }
+        }
+
+        // 相机
+        var camGo = new GameObject("SkinPreviewCam");
+        camGo.transform.SetParent(transform, false);
+        // 从蛇头正前方斜看：眼睛在 +Z 面，相机必须站在 +Z 侧
+        Vector3 center = new Vector3(1000f, -60f, 0f);
+        Quaternion viewRot = Quaternion.Euler(14f, 145f, 0f);   // 朝向蛇头正面偏 35°
+        camGo.transform.rotation = viewRot;
+        camGo.transform.position = center - viewRot * Vector3.forward * 12f;
+
+        var cam = camGo.AddComponent<Camera>();
+        cam.clearFlags = CameraClearFlags.SolidColor;
+        cam.backgroundColor = new Color(0.16f, 0.17f, 0.20f, 1f);
+        cam.orthographic = true;
+        cam.orthographicSize = count * spacing * 0.5f;   // 正好框住 10 只
+        cam.nearClipPlane = 0.1f;
+        cam.farClipPlane = 20f;
+        cam.enabled = false;      // 只用于渲染到贴图
+
+        SkinPreviewRT = new RenderTexture(280, 280 * count, 16);   // 每格正方形
+        SkinPreviewRT.Create();
+
+        cam.targetTexture = SkinPreviewRT;
+        cam.enabled = true;
+    }
+
     // ---------------- 菜单演示 ----------------
     void UpdateDemo()
     {
+        if (cells.Count == 0 || views.Count == 0) { StartDemo(); return; }
+
         demoTimer += Time.deltaTime;
         if (demoTimer >= demoInterval)
         {
@@ -356,63 +494,85 @@ public class SnakeGame : MonoBehaviour
         if (cells.Count == 0) { StartDemo(); return; }
 
         Vector3Int head = cells[0];
-        Vector3Int best = demoDir;
-        float bestScore = float.MaxValue;
-        bool found = false;
 
-        Vector3Int[] candidates =
+        // 候选方向：平面四向 + 偶尔上下
+        var candidates = new List<Vector3Int>
         {
             Vector3Int.right, Vector3Int.left, Vector3Int.forward, Vector3Int.back
         };
+        // 让演示更立体：经常尝试上下
+        if (Random.value < 0.75f) candidates.Add(Vector3Int.up);
+        if (Random.value < 0.65f) candidates.Add(Vector3Int.down);
 
+        var valid = new List<Vector3Int>();
         foreach (var d in candidates)
         {
             if (d == -demoDir) continue;
             Vector3Int n = head + d;
             if (!InBounds(n)) continue;
             if (SelfHit(n)) continue;
-
-            float dist = 9999f;
-            for (int i = 0; i < foodCells.Count; i++)
-                dist = Mathf.Min(dist, (n - foodCells[i]).sqrMagnitude);
-
-            // 靠近食物优先，但别贴墙（贴墙扣分）
-            float score = dist;
-            if (n.x == 0 || n.x == gridSize - 1) score += 3f;
-            if (n.z == 0 || n.z == gridSize - 1) score += 3f;
-
-            if (score < bestScore) { bestScore = score; best = d; found = true; }
+            valid.Add(d);
         }
 
-        if (!found) { StartDemo(); return; }   // 卡死就重开一段
+        if (valid.Count == 0) { StartDemo(); return; }
+
+        Vector3Int best = demoDir;
+
+        // 30% 概率随便走一步，避免一直绕圈
+        if (Random.value < 0.3f)
+        {
+            best = valid[Random.Range(0, valid.Count)];
+        }
+        else
+        {
+            float bestScore = float.MaxValue;
+            foreach (var d in valid)
+            {
+                Vector3Int n = head + d;
+
+                float dist = 9999f;
+                for (int i = 0; i < foodCells.Count; i++)
+                    dist = Mathf.Min(dist, (n - foodCells[i]).sqrMagnitude);
+
+                // 贴墙扣分，避免一直贴着墙转
+                if (n.x <= 0 || n.x >= gridSize - 1) dist += 2.5f;
+                if (n.z <= 0 || n.z >= gridSize - 1) dist += 2.5f;
+                if (n.y <= 0 || n.y >= gridSize - 1) dist += 1.5f;
+
+                // 上下移动额外加分，鼓励立体飞行
+                if (d.y != 0) dist -= 2.2f;
+
+                if (dist < bestScore) { bestScore = dist; best = d; }
+            }
+        }
 
         demoDir = best;
+        faceDir = best;          // 演示也要让头/眼睛朝实际移动方向
         Vector3Int next = head + best;
 
         bool eating = foodCells.Contains(next);
         var old = new List<Vector3Int>(cells);
 
         cells.Insert(0, next);
+
         if (eating)
         {
-            score++;
             SpawnCoinBurst(CellToWorld(next));
             SpawnScorePopup(CellToWorld(next), "1");
-            if (AudioManager.Instance != null) AudioManager.Instance.PlayEat();
+            // 演示不播放音效
             foodCells.Remove(next);
             SpawnExtraFood();
-            RebuildViews();
         }
-        else
-        {
-            cells.RemoveAt(cells.Count - 1);
-        }
+
+        // 演示固定长度：无论是否吃到，都去掉尾巴
+        cells.RemoveAt(cells.Count - 1);
 
         prevCells.Clear();
         for (int i = 0; i < cells.Count; i++)
             prevCells.Add(i < old.Count ? old[i] : cells[i]);
 
-        score = 0;   // 演示不计分
+        if (cells.Count > 8) { StartDemo(); return; }
+        score = 0;
     }
 
     // ---------------- 对外接口 ----------------
@@ -452,18 +612,61 @@ public class SnakeGame : MonoBehaviour
     }
 
     /// <summary>应用设置里的自定义颜色（运行时可调用）。</summary>
+    void ApplySkinColors()
+    {
+        var skin = Skins.Get(GameSettings.SkinIndex);
+        headColor = skin.head;
+        bodyColor = skin.body;
+        eyeColor = skin.eye;
+    }
+
+    static void ApplyPattern(Material m, Skin skin)
+    {
+        if (m == null) return;
+        if (m.HasProperty("_MainTex")) m.mainTexture = skin.pattern;
+        if (m.HasProperty("_PatternAmt")) m.SetFloat("_PatternAmt", skin.pattern != null ? 1f : 0f);
+        if (m.HasProperty("_Tiling")) m.SetFloat("_Tiling", skin.tiling);
+    }
+
+    /// <summary>切换皮肤后立刻生效。</summary>
     public void ApplyCustomColors()
     {
-        headColor = GameSettings.HeadColor;
-        bodyColor = GameSettings.BodyColor;
+        ApplySkinColors();
 
-        if (headMat != null && headMat.HasProperty("_Color")) headMat.color = headColor;
-        if (bodyMat != null && bodyMat.HasProperty("_Color")) bodyMat.color = bodyColor;
+        var skin = Skins.Get(GameSettings.SkinIndex);
+
+        if (headMat != null)
+        {
+            // 头永远是纯色，脸由 EnsureFace 的正面贴片负责
+            if (headMat.HasProperty("_Color")) headMat.color = headColor;
+            if (headMat.HasProperty("_UseTex")) headMat.SetFloat("_UseTex", 0f);
+            if (headMat.HasProperty("_MainTex")) headMat.mainTexture = null;
+            ApplyPattern(headMat, skin);
+        }
+
+        if (bodyMat != null)
+        {
+            if (bodyMat.HasProperty("_Color")) bodyMat.color = bodyColor;
+            ApplyPattern(bodyMat, skin);
+        }
         if (headMatBoost != null && headMatBoost.HasProperty("_Color"))
             headMatBoost.color = Color.Lerp(headColor, Color.white, 0.28f);
         if (bodyMatBoost != null && bodyMatBoost.HasProperty("_Color"))
             bodyMatBoost.color = Color.Lerp(bodyColor, Color.white, 0.28f);
-        if (outlineMat != null) outlineMat.SetColor("_Color", GameSettings.OutlineColor);
+        if (outlineMat != null) outlineMat.SetColor("_Color", Skins.Get(GameSettings.SkinIndex).outline);
+
+        // 切换 BGM（牢大 ↔ 默认）
+        if (AudioManager.Instance != null) AudioManager.Instance.RefreshBgm();
+
+        // 重建食物外观（金币 ↔ 冰红茶）
+        RebuildFoodViews();
+
+        // 眼睛换色：重建眼睛
+        if (eyesRoot != null)
+        {
+            var head = views.Count > 0 ? views[0].transform : null;
+            if (head != null) { Destroy(eyesRoot.gameObject); eyesRoot = null; EnsureEyes(head); }
+        }
     }
 
     public void TogglePause()
@@ -479,13 +682,20 @@ public class SnakeGame : MonoBehaviour
         demoActive = true;
         bodyRevealed = true;
 
+        // 菜单演示固定 5×5×5，不跟随玩家的地图设置
+        gridSize = 5;
+        targetScore = TargetForSize(gridSize);
+        foodCount = FoodCountForSize(gridSize);
+
         BuildWorld();
         cells.Clear();
         prevCells.Clear();
         turnQueue.Clear();
 
         int mid = gridSize / 2;
-        cells.Add(new Vector3Int(mid, mid, mid));
+        int len = Mathf.Min(5, gridSize);
+        for (int i = 0; i < len; i++)
+            cells.Add(new Vector3Int(Mathf.Max(0, mid - i), mid, mid));
         for (int i = 0; i < cells.Count; i++) prevCells.Add(cells[i]);
 
         demoDir = Vector3Int.right;
@@ -494,6 +704,7 @@ public class SnakeGame : MonoBehaviour
         ApplyVisuals(1f);
         if (snakeRoot != null) snakeRoot.gameObject.SetActive(true);
         demoTimer = 0f;
+        Debug.Log("[演示] StartDemo 完成，蛇长 " + cells.Count);
     }
 
     public void StopDemo()
@@ -762,13 +973,26 @@ public class SnakeGame : MonoBehaviour
         fxBaseScale.RemoveAt(i);
     }
 
+    void AddBottlePart(Transform parent, string name, Vector3 pos, Vector3 scale, Color color)
+    {
+        var part = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+        part.name = name;
+        part.transform.SetParent(parent, false);
+        part.transform.localPosition = pos;
+        part.transform.localScale = scale;
+        part.GetComponent<Renderer>().sharedMaterial = MakeFlat(color);
+        Destroy(part.GetComponent<Collider>());
+    }
+
+    bool IsLaodaSkin() => Skins.Get(GameSettings.SkinIndex).name == "牢大";
+
     // ---------------- 渲染 ----------------
     void ApplyVisuals(float t)
     {
-        if (views.Count != cells.Count) return;
+        if (cells.Count == 0 || views.Count != cells.Count) return;
 
         float scale = Mathf.Max(1.04f, segmentScale);   // 略微重叠，拐角天然填满
-        bodyOccluding = IsBodyOccludingHead();
+        bodyOccluding = !demoActive && IsBodyOccludingHead();   // 演示时不出现半透明
 
         var bodyCurrent = isBoosting
             ? (bodyOccluding ? bodyMatBoostGhost : bodyMatBoost)
@@ -821,15 +1045,22 @@ public class SnakeGame : MonoBehaviour
                 if (f == null || !f.activeSelf) continue;
 
                 Vector3 basePos = CellToWorld(foodCells[i]);   // 用格子坐标算，避免累积漂移
-                float bob = Mathf.Sin(Time.time * 2.2f + i) * 0.06f;
+                float bob = IsLaodaSkin() ? 0f : Mathf.Sin(Time.time * 2.2f + i) * 0.06f;
                 f.transform.position = new Vector3(basePos.x, basePos.y + bob, basePos.z);
-                f.transform.rotation = Quaternion.Euler(90f, Time.time * 160f, 0f);
+                f.transform.rotation = IsLaodaSkin()
+                    ? Quaternion.Euler(0f, Time.time * 50f, 0f)          // 瓶子：竖立慢转
+                    : Quaternion.Euler(90f, Time.time * 160f, 0f);       // 金币：立起来转
             }
         }
 
         UpdatePathFillers(bodyCurrent);
 
         UpdateHeadRotation();
+
+        if (views.Count > 0)
+        {
+            EnsureFace(views[0].transform);
+        }
 
         if (headLight != null)
             headLight.transform.position = views[0].transform.position + Vector3.up * 0.6f;
@@ -841,6 +1072,14 @@ public class SnakeGame : MonoBehaviour
 
 
         UpdateHeadPlane();
+    }
+
+    void RebuildFoodViews()
+    {
+        // 只换外观：保留 foodCells，位置不变
+        foreach (var f in foodViews) if (f != null) Destroy(f);
+        foodViews.Clear();
+        SyncFoodViews();       // 会按新的皮肤重新创建模型，位置仍取自 foodCells
     }
 
     void UpdatePathFillers(Material mat)
@@ -955,6 +1194,13 @@ public class SnakeGame : MonoBehaviour
 
     void UpdateHeadPlane()
     {
+        if (demoActive)
+        {
+            foreach (var b in layerBlocks) if (b != null && b.activeSelf) b.SetActive(false);
+            foreach (var e in layerEdges) if (e != null && e.gameObject.activeSelf) e.gameObject.SetActive(false);
+            return;
+        }
+
         if (!showLayerHighlight) return;
         if (layerBlocks.Count == 0 || views.Count == 0) return;
 
@@ -1086,16 +1332,52 @@ public class SnakeGame : MonoBehaviour
         if (views.Count > 0) EnsureEyes(views[0].transform);
     }
 
+    void EnsureFace(Transform head)
+    {
+        var skin = Skins.Get(GameSettings.SkinIndex);
+
+        if (skin.face == null)
+        {
+            if (faceRoot != null) { Destroy(faceRoot.gameObject); faceRoot = null; }
+            return;
+        }
+
+        if (faceRoot != null && faceRoot.parent == head && faceRoot.gameObject.activeSelf) return;
+        if (faceRoot != null) Destroy(faceRoot.gameObject);
+
+        var root = new GameObject("Face").transform;
+        root.SetParent(head, false);
+        faceRoot = root;
+
+        var quad = GameObject.CreatePrimitive(PrimitiveType.Quad);
+        quad.name = "FaceQuad";
+        quad.transform.SetParent(root, false);
+        quad.transform.localPosition = new Vector3(0f, 0f, 0.505f);
+        quad.transform.localRotation = Quaternion.Euler(0f, 180f, 0f);   // 让贴图朝向 +Z
+        quad.transform.localScale = new Vector3(0.96f, 0.96f, 1f);
+
+        var mat = MakeFlat(Color.white, skin.face, 1f);
+        if (mat.HasProperty("_UseTex")) mat.SetFloat("_UseTex", 1f);
+        if (mat.HasProperty("_PatternAmt")) mat.SetFloat("_PatternAmt", 0f);
+
+        var r = quad.GetComponent<Renderer>();
+        r.sharedMaterial = mat;
+        r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+        Destroy(quad.GetComponent<Collider>());
+    }
+
     void EnsureEyes(Transform head)
     {
+        if (Skins.Get(GameSettings.SkinIndex).noEyes)
+        {
+            if (eyesRoot != null) { Destroy(eyesRoot.gameObject); eyesRoot = null; }
+            return;
+        }
+
         if (eyesRoot != null && eyesRoot.parent == head) return;
         if (eyesRoot != null) Destroy(eyesRoot.gameObject);
 
-        if (eyeWhiteMat == null)
-        {
-            eyeWhiteMat = MakeMaterial(new Color(0.95f, 0.97f, 1f), 0.85f, 0f, new Color(0.9f, 0.95f, 1f) * 0.1f);
-            eyePupilMat = MakeMaterial(new Color(0.04f, 0.04f, 0.06f), 0.9f, 0f);
-        }
+        eyeMat = MakeFlat(eyeColor);
 
         var root = new GameObject("Eyes").transform;
         root.SetParent(head, false);
@@ -1106,19 +1388,21 @@ public class SnakeGame : MonoBehaviour
             var eye = GameObject.CreatePrimitive(PrimitiveType.Cube);
             eye.name = i < 0 ? "Eye_L" : "Eye_R";
             eye.transform.SetParent(root, false);
-            eye.transform.localPosition = new Vector3(0.20f * i, 0.10f, 0.40f);
-            eye.transform.localScale = Vector3.one * 0.18f;
-            eye.GetComponent<Renderer>().sharedMaterial = eyeWhiteMat;
+            eye.transform.localPosition = new Vector3(0.17f * i, 0.09f, 0.46f);
+            eye.transform.localScale = new Vector3(0.11f, 0.30f, 0.10f);   // 长条：窄高
+            eye.GetComponent<Renderer>().sharedMaterial = eyeMat;
             Destroy(eye.GetComponent<Collider>());
-
-            var pupil = GameObject.CreatePrimitive(PrimitiveType.Cube);
-            pupil.name = "Pupil";
-            pupil.transform.SetParent(eye.transform, false);
-            pupil.transform.localPosition = new Vector3(0f, 0f, 0.55f);
-            pupil.transform.localScale = new Vector3(0.55f, 0.55f, 0.3f);
-            pupil.GetComponent<Renderer>().sharedMaterial = eyePupilMat;
-            Destroy(pupil.GetComponent<Collider>());
         }
+    }
+
+    /// <summary>眼睛颜色：跟头色对比度不够时自动换成黑或白。</summary>
+    static Color EyeColorFor(Color head, Color eye)
+    {
+        // 只按头色亮度决定：亮的头配深色眼睛，暗的头配亮色眼睛
+        float headLum = head.r * 0.299f + head.g * 0.587f + head.b * 0.114f;
+        return headLum > 0.45f
+            ? new Color(0.06f, 0.06f, 0.08f)     // 深色眼
+            : new Color(0.97f, 0.97f, 0.99f);    // 亮色眼
     }
 
     // ---------------- 蛇身数据 ----------------
@@ -1161,11 +1445,44 @@ public class SnakeGame : MonoBehaviour
         while (foodViews.Count < foodCells.Count)
         {
             var go = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
-            go.name = "Coin";
+            go.name = "Food";
             go.transform.SetParent(boardRoot, false);
-            go.transform.localScale = new Vector3(0.72f, 0.07f, 0.72f);   // 薄圆盘
-            go.GetComponent<Renderer>().sharedMaterial = foodMat;
             Destroy(go.GetComponent<Collider>());
+
+            var bodyRenderer = go.GetComponent<Renderer>();
+
+            if (IsLaodaSkin())
+            {
+                // 冰红茶：自建瓶子（瓶身分上下两段、蓝色腰线、标签、肩、颈、盖）
+                go.transform.localScale = Vector3.one;
+                Destroy(go.GetComponent<Renderer>());
+                bodyRenderer = null;
+
+                const float k = 0.85f;                                  // 整体缩放
+
+                Color teaTop = new Color(0.98f, 0.66f, 0.14f);           // 上部茶色
+                Color teaBottom = new Color(0.88f, 0.46f, 0.07f);        // 下部深茶
+                Color teaDark = new Color(0.80f, 0.40f, 0.05f);          // 肩部
+                Color label = new Color(0.98f, 0.97f, 0.92f);            // 标签白
+                Color blue = new Color(0.13f, 0.32f, 0.72f);             // 包装蓝
+                Color capCol = new Color(0.99f, 0.83f, 0.16f);           // 瓶盖黄
+
+                AddBottlePart(go.transform, "BodyBottom", new Vector3(0f, -0.27f * k, 0f), new Vector3(0.40f * k, 0.13f * k, 0.40f * k), teaBottom);
+                AddBottlePart(go.transform, "BodyTop", new Vector3(0f, -0.06f * k, 0f), new Vector3(0.42f * k, 0.11f * k, 0.42f * k), teaTop);
+                AddBottlePart(go.transform, "Label", new Vector3(0f, -0.13f * k, 0f), new Vector3(0.44f * k, 0.11f * k, 0.44f * k), label);
+                AddBottlePart(go.transform, "LabelStripe", new Vector3(0f, -0.05f * k, 0f), new Vector3(0.445f * k, 0.012f * k, 0.445f * k), blue);
+                AddBottlePart(go.transform, "Shoulder", new Vector3(0f, 0.13f * k, 0f), new Vector3(0.34f * k, 0.09f * k, 0.34f * k), teaDark);
+                AddBottlePart(go.transform, "ShoulderTop", new Vector3(0f, 0.22f * k, 0f), new Vector3(0.26f * k, 0.04f * k, 0.26f * k), teaTop);
+                AddBottlePart(go.transform, "Neck", new Vector3(0f, 0.29f * k, 0f), new Vector3(0.18f * k, 0.05f * k, 0.18f * k), teaTop);
+                AddBottlePart(go.transform, "Cap", new Vector3(0f, 0.36f * k, 0f), new Vector3(0.21f * k, 0.045f * k, 0.21f * k), capCol);
+                AddBottlePart(go.transform, "CapTop", new Vector3(0f, 0.405f * k, 0f), new Vector3(0.19f * k, 0.012f * k, 0.19f * k), capCol);
+            }
+            else
+            {
+                go.transform.localScale = new Vector3(0.72f, 0.07f, 0.72f);   // 金币：薄圆盘
+                bodyRenderer.sharedMaterial = foodMat;
+            }
+
             foodViews.Add(go);
         }
         while (foodViews.Count > foodCells.Count)
@@ -1417,7 +1734,7 @@ public class SnakeGame : MonoBehaviour
         if (AudioManager.Instance != null)
         {
             if (won) AudioManager.Instance.PlayWin();
-            else AudioManager.Instance.PlayOver();
+            else AudioManager.Instance.PlayOver();   // 牢大皮肤的专属结算音在 PlayOver 内部处理
         }
 
         Debug.Log($"游戏结束：{reason}，得分 {score}/{targetScore}");

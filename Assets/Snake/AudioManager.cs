@@ -11,14 +11,29 @@ public class AudioManager : MonoBehaviour
 
     private AudioSource bgm;
     private AudioSource sfx;
+    private AudioSource eatSource;
     private AudioClip bgmClip, eatClip, turnClip, overClip, countClip, lastClip;
-    private AudioClip boostInClip, boostOutClip, winClip, bumpClip;
+    private AudioClip bgmDefault, bgmLaoda;      // 两套背景乐
+    private AudioClip eatDefault, eatLaoda;      // 两套吃食物音效
+    private AudioClip boostInClip, boostOutClip, winClip, bumpClip, laodaTurnClip;
+    private AudioClip boostInLaoda, boostOutLaoda, overLaoda, winLaoda;
+
+    // 渐入渐出
+    private float bgmTargetVolume;      // 目标音量（= 设置值）
+    private float bgmFadeMul = 1f;      // 当前淡入淡出系数 0~1
+    private float bgmFadeSpeed = 0f;    // 每秒变化量
+    private float overFade = 1f;        // 结算音效的淡入淡出系数
+    private float overFadeSpeed = 0f;   // 恒正
+    private int overFadeDir = 0;        // 1=淡入 -1=淡出 0=保持
+    private AudioSource overSource;     // 结算用独立音源
+    private AudioSource boostInReverse; // 倒放加速音效
 
     void Awake()
     {
         if (Instance != null && Instance != this) { Destroy(gameObject); return; }
         Instance = this;
 
+        bgmFadeMul = 0f;              // 一开始就是静音，等 Start 淡入
         bgm = gameObject.AddComponent<AudioSource>();
         bgm.loop = true;
         bgm.playOnAwake = false;
@@ -29,8 +44,33 @@ public class AudioManager : MonoBehaviour
         sfx.playOnAwake = false;
         sfx.spatialBlend = 0f;
 
-        bgmClip = BuildBgm();
-        eatClip = BuildBlip("eat", new[] { 660f, 880f }, 0.14f, 0.55f);
+        // 倒放音源（加速音效倒着播）
+        boostInReverse = gameObject.AddComponent<AudioSource>();
+        boostInReverse.loop = false;
+        boostInReverse.playOnAwake = false;
+        boostInReverse.spatialBlend = 0f;
+
+        // 结算音：独立音源，支持淡入淡出
+        overSource = gameObject.AddComponent<AudioSource>();
+        overSource.loop = false;
+        overSource.playOnAwake = false;
+        overSource.spatialBlend = 0f;
+        overSource.volume = 0f;
+
+        // 吃食物：叠加播放，不打断上一声
+        eatSource = gameObject.AddComponent<AudioSource>();
+        eatSource.loop = false;
+        eatSource.playOnAwake = false;
+        eatSource.spatialBlend = 0f;
+
+        // 两套 BGM：程序生成的原版 + 外部导入的
+        bgmDefault = BuildBgm();
+        bgmLaoda = Resources.Load<AudioClip>("bgm");
+
+        // 两套吃食物音效
+        eatDefault = BuildBlip("eat", new[] { 660f, 880f }, 0.14f, 0.55f);
+        eatLaoda = Resources.Load<AudioClip>("eat_sound");
+
         turnClip = BuildBlip("turn", new[] { 420f }, 0.06f, 0.22f);
         countClip = BuildBlip("count", new[] { 520f }, 0.12f, 0.4f);
         lastClip = BuildBlip("go", new[] { 780f, 1040f }, 0.25f, 0.5f);
@@ -43,24 +83,225 @@ public class AudioManager : MonoBehaviour
 
     void Start()
     {
+        bgmClip = IsLaodaSkin() ? bgmLaoda : bgmDefault;
+        if (bgmClip == null) bgmClip = bgmDefault;
+
         bgm.clip = bgmClip;
-        bgm.volume = GameSettings.BgmVolume;
+        bgmFadeMul = 0f;              // 从静音开始
+        bgm.volume = 0f;
         bgm.Play();
+        FadeInBgm();                  // 渐入
     }
 
     void Update()
     {
-        if (bgm != null) bgm.volume = GameSettings.BgmVolume;
+        float dt = Mathf.Min(Time.unscaledDeltaTime, 0.05f);   // 限幅：避免开场长帧一帧完成淡入
+
+        // BGM：目标音量 × 淡入淡出系数（速度恒为正，方向由目标决定）
+        if (bgmFadeSpeed > 0.0001f)
+        {
+            bgmFadeMul = Mathf.MoveTowards(bgmFadeMul, bgmFadeTarget, bgmFadeSpeed * dt);
+            if (Mathf.Approximately(bgmFadeMul, bgmFadeTarget)) bgmFadeSpeed = 0f;
+        }
+
+        if (bgm != null)
+        {
+            bgm.volume = GameSettings.BgmVolume * bgmFadeMul;
+
+            // 淡出到 0 后如果是换曲待办，这里执行切换
+            if (bgmFadeMul <= 0.001f && pendingBgm != null)
+            {
+                bgmClip = pendingBgm;
+                pendingBgm = null;
+                bgm.clip = bgmClip;
+                bgm.Play();
+                FadeInBgm();
+            }
+        }
+
+        // 结算音：淡入 → 保持 → 末尾淡出
+        if (overSource != null && overSource.isPlaying)
+        {
+            if (overFadeDir > 0)
+            {
+                overFade = Mathf.MoveTowards(overFade, 1f, overFadeSpeed * dt);
+                if (overFade >= 0.999f) overFadeDir = 0;
+            }
+            else if (overFadeDir < 0)
+            {
+                overFade = Mathf.MoveTowards(overFade, 0f, overFadeSpeed * dt);
+                if (overFade <= 0.001f) { overSource.Stop(); overFadeDir = 0; }
+            }
+            else
+            {
+                float remain = overSource.clip != null ? overSource.clip.length - overSource.time : 99f;
+                if (remain <= overFadeOutLen) { overFadeDir = -1; overFadeSpeed = 1f / overFadeOutLen; }
+            }
+
+            overSource.volume = GameSettings.SfxVolume * overFade;
+        }
+
         if (sfx != null) sfx.volume = GameSettings.SfxVolume;
     }
 
-    public void PlayEat() => OneShot(eatClip, 0.9f);
-    public void PlayTurn() => OneShot(turnClip, 0.6f);
-    public void PlayOver() => OneShot(overClip, 1f);
-    public void PlayWin() => OneShot(winClip, 1f);
-    public void PlayBoostIn() => OneShot(boostInClip, 0.7f);
-    public void PlayBoostOut() => OneShot(boostOutClip, 0.5f);
-    public void PlayBump() => OneShot(bumpClip, 0.9f);
+    private float bgmFadeTarget = 1f;
+    private AudioClip pendingBgm;
+    private const float BgmFadeLen = 1.6f;
+    private const float OverFadeInLen = 0.35f;
+    private float overFadeOutLen = 1.2f;
+
+    void FadeInBgm()
+    {
+        bgmFadeTarget = 1f;
+        bgmFadeSpeed = 1f / BgmFadeLen;
+    }
+
+    /// <summary>BGM 淡出到静音后切到指定曲目，再淡入。</summary>
+    void SwitchBgmFaded(AudioClip next)
+    {
+        if (next == null) next = bgmDefault;
+
+        if (bgm == null) { bgmClip = next; return; }
+
+        // 目标就是当前这首：取消待切换，直接淡回来（快速来回切时关键）
+        if (bgmClip == next)
+        {
+            pendingBgm = null;
+            if (bgmFadeMul < 0.999f)
+            {
+                bgmFadeTarget = 1f;
+                bgmFadeSpeed = 1f / BgmFadeLen;
+            }
+            return;
+        }
+
+        pendingBgm = next;
+        bgmFadeTarget = 0f;
+        bgmFadeSpeed = 1f / (BgmFadeLen * 0.6f);    // 恒正，方向靠 target=0
+    }
+
+    public void PlayEat()
+    {
+        var clip = IsLaodaSkin() ? eatLaoda : eatDefault;
+        if (clip == null || eatSource == null) return;
+
+        eatSource.volume = Mathf.Clamp01(GameSettings.SfxVolume) * 0.9f;
+        eatSource.PlayOneShot(clip);         // 独立音源：不会覆盖/打断
+    }
+
+    /// <summary>按当前皮肤切换 BGM（切皮肤后调用）。</summary>
+    public void RefreshBgm()
+    {
+        var want = IsLaodaSkin() ? bgmLaoda : bgmDefault;
+        SwitchBgmFaded(want);
+    }
+    public void PlayTurn()
+    {
+        // 牢大皮肤：用专属点击音效
+        if (IsLaodaSkin())
+        {
+            if (laodaTurnClip == null) laodaTurnClip = Resources.Load<AudioClip>("turn_laoda");
+            if (laodaTurnClip != null) { OneShot(laodaTurnClip, 0.9f); return; }
+        }
+        OneShot(turnClip, 0.6f);
+    }
+
+    static bool IsLaodaSkin() => Skins.Get(GameSettings.SkinIndex).name == "牢大";
+    /// <summary>用支持淡入淡出的音源播放一段音频。</summary>
+    void PlayFaded(AudioClip clip)
+    {
+        if (clip == null || overSource == null) return;
+
+        overSource.Stop();
+        overSource.clip = clip;
+        overFade = 0f;
+        overFadeDir = 1;
+        overFadeSpeed = 1f / OverFadeInLen;
+        overFadeOutLen = Mathf.Min(1.2f, clip.length * 0.35f);
+        overSource.volume = 0f;
+        overSource.Play();
+    }
+
+    public void PlayOver()
+    {
+        AudioClip clip = null;
+
+        if (IsLaodaSkin())
+        {
+            if (overLaoda == null) overLaoda = Resources.Load<AudioClip>("win_laoda");
+            clip = overLaoda;
+        }
+        if (clip == null) clip = overClip;
+
+        if (clip == null || overSource == null) return;
+
+        // 渐入 + 末尾自动渐出
+        overSource.Stop();
+        overSource.clip = clip;
+        overFade = 0f;
+        overFadeDir = 1;
+        overFadeSpeed = 1f / OverFadeInLen;
+        overFadeOutLen = Mathf.Min(1.2f, clip.length * 0.35f);
+        overSource.volume = 0f;
+        overSource.Play();
+    }
+    public void PlayWin()
+    {
+        if (IsLaodaSkin())
+        {
+            if (winLaoda == null) winLaoda = Resources.Load<AudioClip>("over_laoda");
+            if (winLaoda != null)
+            {
+                // 走带淡入淡出的独立音源
+                PlayFaded(winLaoda);
+                return;
+            }
+        }
+        OneShot(winClip, 1f);
+    }
+    public void PlayBoostIn()
+    {
+        if (IsLaodaSkin())
+        {
+            if (boostInLaoda == null) boostInLaoda = Resources.Load<AudioClip>("boost_in_laoda");
+            if (boostInLaoda != null)
+            {
+                if (boostInReverse != null) boostInReverse.pitch = 1f;
+                OneShot(boostInLaoda, 0.9f);
+                return;
+            }
+        }
+        OneShot(boostInClip, 0.7f);
+    }
+    public void PlayBoostOut()
+    {
+        if (IsLaodaSkin())
+        {
+            // 倒放「加速」那段，形成"收回去"的效果
+            if (boostInLaoda == null) boostInLaoda = Resources.Load<AudioClip>("boost_in_laoda");
+            if (boostInLaoda != null && boostInReverse != null)
+            {
+                boostInReverse.Stop();
+                boostInReverse.clip = boostInLaoda;
+                boostInReverse.pitch = -1f;                        // 负数 = 倒放
+                boostInReverse.time = boostInLaoda.length - 0.02f; // 关键：播放头先跳到末尾
+                boostInReverse.volume = GameSettings.SfxVolume * 0.9f;
+                boostInReverse.Play();
+                return;
+            }
+        }
+        OneShot(boostOutClip, 0.5f);
+    }
+    public void PlayBump()
+    {
+        if (IsLaodaSkin())
+        {
+            if (laodaTurnClip == null) laodaTurnClip = Resources.Load<AudioClip>("turn_laoda");
+            if (laodaTurnClip != null) { OneShot(laodaTurnClip, 1f); return; }
+        }
+        OneShot(bumpClip, 0.9f);
+    }
+
     public void PlayCount() => OneShot(countClip, 0.8f);
     public void PlayGo() => OneShot(lastClip, 1f);
 

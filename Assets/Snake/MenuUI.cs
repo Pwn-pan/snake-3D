@@ -11,7 +11,9 @@ public class MenuUI : MonoBehaviour
     private SnakeGame game;
     private Font font;
 
-    private GameObject menuPanel, settingsPanel, hudPanel, overPanel, countdownObj, pausePanel, difficultyPanel, mapPanel, leaderboardPanel, colorPanel;
+    private GameObject menuPanel, settingsPanel, hudPanel, overPanel, countdownObj, pausePanel, difficultyPanel, mapPanel, leaderboardPanel, skinPanel;
+    private System.Collections.Generic.List<GameObject> skinTiles;
+    private ScrollRect skinScrollRect;
     private Text scoreText, overScoreText, countdownText, overTitle;
     private Text bgmLabel, sfxLabel, speedLabel, viewLabel, camLabel, viewButtonLabel;
     private Text lbListText, lbStatusText, lbDiffText, lbMapText, lbNameStatus;
@@ -24,11 +26,23 @@ public class MenuUI : MonoBehaviour
     private Texture2D menuBgTex;
     private Image flashImage;
     private float flashAlpha;
+    private class ClosingPanel { public GameObject go; public float t; }
+    private readonly System.Collections.Generic.List<ClosingPanel> closingPanels = new System.Collections.Generic.List<ClosingPanel>();
+
+    private GameObject animTarget;
+    private float animT = 1f;
+    private float animDur = 0.2f;
     private Sprite roundedSprite;
     private Sprite circleSprite;
     private Sprite gradientSprite;
     private float settingsContentHeight = 1100f;
-    private float settingsScroll;
+    private ScrollRect settingsScrollRect;
+    private float settingsMaxScroll = 0f;
+    private RectTransform settingsViewport;
+    private Image hintTop;
+    private Image hintBottom;
+    private float hintTopAlpha;
+    private float hintBottomAlpha;
 
     private int lastCountdownStep = -1;
 
@@ -118,6 +132,8 @@ public class MenuUI : MonoBehaviour
 
         BuildSprites();
         BuildUI();
+        foreach (var panel in new[] { settingsPanel, skinPanel, leaderboardPanel, difficultyPanel, mapPanel, pausePanel, overPanel })
+            if (panel != null) panel.SetActive(false);
         ShowMenu();
 
         game.OnBumped += () =>
@@ -195,6 +211,9 @@ public class MenuUI : MonoBehaviour
 
     void Update()
     {
+        UpdatePanelAnim();
+        UpdateClosing();
+
         if (game == null) return;
 
         // 菜单背景：缓慢流动
@@ -211,6 +230,29 @@ public class MenuUI : MonoBehaviour
                 menuBackground.gameObject.SetActive(inMenu);
         }
 
+
+        // 越界提示：已经到顶/到底还继续滚
+        if (settingsPanel != null && settingsPanel.activeSelf && settingsScrollRect != null)
+        {
+            float w = Input.mouseScrollDelta.y;
+            if (Mathf.Abs(w) > 0.01f)
+            {
+                float v = settingsScrollRect.verticalNormalizedPosition;
+                if (v >= 0.999f) hintTopAlpha = 0.9f;
+                if (v <= 0.001f) hintBottomAlpha = 0.9f;
+            }
+        }
+
+        // 越界提示淡出
+        if (hintTopAlpha > 0f || hintBottomAlpha > 0f)
+        {
+            hintTopAlpha = Mathf.Max(0f, hintTopAlpha - Time.deltaTime * 2.2f);
+            hintBottomAlpha = Mathf.Max(0f, hintBottomAlpha - Time.deltaTime * 2.2f);
+
+            if (hintTop != null) hintTop.color = new Color(0.82f, 0.84f, 0.87f, hintTopAlpha);
+            if (hintBottom != null) hintBottom.color = new Color(0.82f, 0.84f, 0.87f, hintBottomAlpha);
+        }
+
         // 撞击红闪衰减
         if (flashImage != null)
         {
@@ -218,18 +260,11 @@ public class MenuUI : MonoBehaviour
             flashImage.color = new Color(1f, 0.15f, 0.15f, flashAlpha);
         }
 
-        // 设置页滚轮滚动
-        if (settingsPanel != null && settingsPanel.activeSelf)
-        {
-            float wheel = Input.mouseScrollDelta.y;
-            if (Mathf.Abs(wheel) > 0.01f) ScrollSettings(-wheel * 90f);   // 向上滚 → 内容往上走
-        }
-
         // Esc：在任何菜单面板里都能直接退回主菜单
         if (Input.GetKeyDown(KeyCode.Escape))
         {
             bool anyPanel = (settingsPanel != null && settingsPanel.activeSelf)
-                         || (colorPanel != null && colorPanel.activeSelf)
+                         || (skinPanel != null && skinPanel.activeSelf)
                          || (leaderboardPanel != null && leaderboardPanel.activeSelf)
                          || (difficultyPanel != null && difficultyPanel.activeSelf)
                          || (mapPanel != null && mapPanel.activeSelf);
@@ -265,7 +300,10 @@ public class MenuUI : MonoBehaviour
 
         bool playing = game.state == SnakeGame.GameState.Playing;
         hudPanel.SetActive(playing && !game.paused);
-        pausePanel.SetActive(playing && game.paused);
+
+        bool wantPause = playing && game.paused;
+        if (wantPause && !pausePanel.activeSelf) ActivatePanel(pausePanel);
+        else if (!wantPause && pausePanel.activeSelf) pausePanel.SetActive(false);
         scoreText.text = $"得分  {game.score} / {game.targetScore}" + (game.targetReached ? "　✔ 目标达成" : "");
 
         if (game.state == SnakeGame.GameState.GameOver && !submitQueued)
@@ -276,7 +314,7 @@ public class MenuUI : MonoBehaviour
 
         if (game.state == SnakeGame.GameState.GameOver && !overPanel.activeSelf)
         {
-            overPanel.SetActive(true);
+            ActivatePanel(overPanel);
             overScoreText.text = $"得分 {game.score} / {game.targetScore}";
             overTitle.text = game.won ? "胜利！" : "游戏结束";
             overTitle.color = game.won
@@ -302,8 +340,12 @@ public class MenuUI : MonoBehaviour
     {
         if (game != null) game.StartDemo();   // 菜单里跑自动演示
 
-        menuPanel.SetActive(true);
-        settingsPanel.SetActive(false);
+        ActivatePanel(menuPanel);
+        ClosePanel(settingsPanel);
+        ClosePanel(skinPanel);
+        ClosePanel(leaderboardPanel);
+        ClosePanel(difficultyPanel);
+        ClosePanel(mapPanel);
         overPanel.SetActive(false);
         hudPanel.SetActive(false);
         countdownObj.SetActive(false);
@@ -311,14 +353,13 @@ public class MenuUI : MonoBehaviour
         if (difficultyPanel != null) difficultyPanel.SetActive(false);
         if (mapPanel != null) mapPanel.SetActive(false);
         if (leaderboardPanel != null) leaderboardPanel.SetActive(false);
-        if (colorPanel != null) colorPanel.SetActive(false);
     }
 
     void OpenLeaderboard()
     {
         menuPanel.SetActive(false);
         settingsPanel.SetActive(false);
-        leaderboardPanel.SetActive(true);
+        ActivatePanel(leaderboardPanel);
         lbDifficulty = 2;   // 只做困难榜
         if (lbNameInput != null) lbNameInput.text = GameSettings.PlayerName;
         lbMap = GameSettings.MapSize;
@@ -386,14 +427,14 @@ public class MenuUI : MonoBehaviour
         menuPanel.SetActive(false);
         settingsPanel.SetActive(false);
         overPanel.SetActive(false);
-        difficultyPanel.SetActive(true);
+        ActivatePanel(difficultyPanel);
         mapPanel.SetActive(false);
     }
 
     void ShowMapSelect()
     {
         difficultyPanel.SetActive(false);
-        mapPanel.SetActive(true);
+        ActivatePanel(mapPanel);
     }
 
     void StartGameClicked()
@@ -405,7 +446,6 @@ public class MenuUI : MonoBehaviour
         difficultyPanel.SetActive(false);
         mapPanel.SetActive(false);
         if (leaderboardPanel != null) leaderboardPanel.SetActive(false);
-        if (colorPanel != null) colorPanel.SetActive(false);
         if (pausePanel != null) pausePanel.SetActive(false);
         submitQueued = false;
         game.StopDemo();
@@ -415,9 +455,8 @@ public class MenuUI : MonoBehaviour
     void OpenSettings()
     {
         menuPanel.SetActive(false);
-        settingsPanel.SetActive(true);
-        settingsScroll = 0f;
-        if (settingsContent != null) settingsContent.anchoredPosition = new Vector2(0, -420);
+        ActivatePanel(settingsPanel);
+        if (settingsScrollRect != null) settingsScrollRect.verticalNormalizedPosition = 1f;
 
         bgmSlider.SetValueWithoutNotify(GameSettings.BgmVolume);
         sfxSlider.SetValueWithoutNotify(GameSettings.SfxVolume);
@@ -428,14 +467,23 @@ public class MenuUI : MonoBehaviour
 
     void CloseSettings()
     {
+        ClosePanel(settingsPanel);
+        ActivatePanel(menuPanel);
+        return;
+
         settingsPanel.SetActive(false);
         menuPanel.SetActive(true);
     }
 
     Text RowLabel(Transform parent, string text, float y)
     {
-        return Label(parent, text, 32, new Vector2(-470, y), new Vector2(460, 60), FontStyle.Normal,
-                     new Color(0.9f, 0.95f, 1f), TextAnchor.MiddleLeft);
+        var t = Label(parent, text, 30, new Vector2(-300, y), new Vector2(360, 60), FontStyle.Normal,
+                      new Color(0.9f, 0.95f, 1f), TextAnchor.MiddleLeft);
+        var trt = t.rectTransform;
+        trt.anchorMin = trt.anchorMax = new Vector2(0.5f, 1f);
+        trt.pivot = new Vector2(0.5f, 1f);
+        trt.anchoredPosition = new Vector2(-300, y);
+        return t;
     }
 
     GameObject RowButton(Transform parent, string text, float y, System.Action onClick)
@@ -443,15 +491,16 @@ public class MenuUI : MonoBehaviour
         var go = new GameObject("Row_" + text, typeof(RectTransform), typeof(Image), typeof(Button));
         go.transform.SetParent(parent, false);
         var rt = go.GetComponent<RectTransform>();
-        rt.anchorMin = rt.anchorMax = new Vector2(0.5f, 0.5f);
+        rt.anchorMin = rt.anchorMax = new Vector2(0.5f, 1f);
+        rt.pivot = new Vector2(0.5f, 1f);
         rt.anchoredPosition = new Vector2(240, y);
-        rt.sizeDelta = new Vector2(480, 76);
+        rt.sizeDelta = new Vector2(440, 72);
 
-        go.GetComponent<Image>().color = new Color(0.16f, 0.34f, 0.26f, 0.95f);
+        go.GetComponent<Image>().color = new Color(0.22f, 0.24f, 0.27f, 0.94f);
         var btn = go.GetComponent<Button>();
         var colors = btn.colors;
-        colors.highlightedColor = new Color(0.26f, 0.56f, 0.38f);
-        colors.pressedColor = new Color(0.12f, 0.26f, 0.18f);
+        colors.highlightedColor = new Color(0.34f, 0.37f, 0.41f);
+        colors.pressedColor = new Color(0.16f, 0.17f, 0.19f);
         btn.colors = colors;
         btn.onClick.AddListener(() =>
         {
@@ -465,47 +514,219 @@ public class MenuUI : MonoBehaviour
         return go;
     }
 
-    void ScrollSettings(float delta)
+    Image MakeHint(Transform parent, Vector2 pos)
     {
-        if (settingsContent == null) return;
-        settingsScroll = Mathf.Clamp(settingsScroll + delta, 0f, Mathf.Max(0f, settingsContentHeight - 760f));
-        settingsContent.anchoredPosition = new Vector2(0, -420 + settingsScroll);
+        var go = new GameObject("Hint", typeof(RectTransform), typeof(Image));
+        go.transform.SetParent(parent, false);
+
+        var rt = go.GetComponent<RectTransform>();
+        rt.anchorMin = rt.anchorMax = new Vector2(0.5f, 0.5f);
+        rt.anchoredPosition = pos;
+        rt.sizeDelta = new Vector2(1560f, 14f);
+
+        var img = go.GetComponent<Image>();
+        img.sprite = roundedSprite;
+        img.type = Image.Type.Sliced;
+        img.color = new Color(0.82f, 0.84f, 0.87f, 0f);
+        img.raycastTarget = false;
+        return img;
     }
 
-    void ShowColorPanel()
+    /// <summary>动画时长由设置里的「镜头速度」决定：越大越快。</summary>
+    float AnimDuration()
     {
-        settingsPanel.SetActive(false);
-        colorPanel.SetActive(true);
+        float v = 10f;   // 固定用 10 档，不再跟随设置
+        return Mathf.Lerp(0.55f, 0.12f, Mathf.InverseLerp(0.5f, 20f, v));
     }
 
-    void ApplyColorsToGame()
+    void ActivatePanel(GameObject panel)
     {
-        var game = FindObjectOfType<SnakeGame>();
-        if (game != null) game.ApplyCustomColors();
-    }
+        if (panel == null) return;
 
-    /// <summary>一行：标题 + 12 个色块</summary>
-    void BuildColorRow(Transform parent, string title, float y, Color[] colors, System.Action<Color> onPick)
-    {
-        Label(parent, title, 30, new Vector2(-620, y), new Vector2(160, 45), FontStyle.Normal, Color.white, TextAnchor.MiddleLeft);
-
-        float startX = -470f;
-        float step = 88f;
-        for (int i = 0; i < colors.Length; i++)
+        // 清掉其它面板可能残留的半透明
+        foreach (var other in new[] { menuPanel, settingsPanel, skinPanel, leaderboardPanel, difficultyPanel, mapPanel, pausePanel, overPanel })
         {
-            var go = new GameObject("Swatch", typeof(RectTransform), typeof(Image), typeof(Button));
-            go.transform.SetParent(parent, false);
-            var rt = go.GetComponent<RectTransform>();
-            rt.anchorMin = rt.anchorMax = new Vector2(0.5f, 0.5f);
-            rt.anchoredPosition = new Vector2(startX + i * step, y);
-            rt.sizeDelta = new Vector2(80, 80);
+            if (other == null || other == panel) continue;
+            var og = other.GetComponent<CanvasGroup>();
+            if (og != null) og.alpha = 1f;
+        }
+        if (!panel.activeSelf) panel.SetActive(true);
 
-            var img = go.GetComponent<Image>();
-            img.color = colors[i];
+        var cg = panel.GetComponent<CanvasGroup>();
+        if (cg == null) return;
 
-            var btn = go.GetComponent<Button>();
-            var cb = colors[i];
-            btn.onClick.AddListener(() => { onPick(cb); if (AudioManager.Instance != null) AudioManager.Instance.PlayTurn(); });
+        animTarget = panel;
+        animT = 0f;
+        animDur = AnimDuration();
+        cg.alpha = 0f;
+
+        var rt = panel.GetComponent<RectTransform>();
+        if (rt != null) rt.localScale = new Vector3(0.97f, 0.97f, 1f);
+    }
+
+    /// <summary>淡出后关闭，时长取决于「镜头速度」设置。</summary>
+    void ClosePanel(GameObject panel)
+    {
+        if (panel == null || !panel.activeSelf) return;
+
+        var cg = panel.GetComponent<CanvasGroup>();
+        if (cg == null) { panel.SetActive(false); return; }
+
+        // 避免重复添加
+        foreach (var c in closingPanels) if (c.go == panel) return;
+
+        closingPanels.Add(new ClosingPanel { go = panel, t = 0f });
+    }
+
+    void UpdateClosing()
+    {
+        float dur = AnimDuration();
+
+        for (int i = closingPanels.Count - 1; i >= 0; i--)
+        {
+            var c = closingPanels[i];
+            if (c.go == null) { closingPanels.RemoveAt(i); continue; }
+
+            c.t += Time.deltaTime / Mathf.Max(0.05f, dur);
+            float k = Mathf.Clamp01(c.t);
+
+            var cg = c.go.GetComponent<CanvasGroup>();
+            if (cg != null) cg.alpha = 1f - k;
+
+            var rt = c.go.GetComponent<RectTransform>();
+            if (rt != null) rt.localScale = Vector3.Lerp(Vector3.one, new Vector3(0.98f, 0.98f, 1f), k);
+
+            if (c.t >= 1f)
+            {
+                if (cg != null) cg.alpha = 1f;
+                if (rt != null) rt.localScale = Vector3.one;
+                c.go.SetActive(false);
+                closingPanels.RemoveAt(i);
+            }
+        }
+    }
+
+    void UpdatePanelAnim()
+    {
+        if (animTarget == null) return;
+
+        animT += Time.deltaTime / Mathf.Max(0.05f, animDur);
+        float k = Mathf.Clamp01(animT);
+        k = 1f - (1f - k) * (1f - k);      // 缓出
+
+        var cg = animTarget.GetComponent<CanvasGroup>();
+        if (cg != null) cg.alpha = k;
+
+        var rt = animTarget.GetComponent<RectTransform>();
+        if (rt != null) rt.localScale = Vector3.Lerp(new Vector3(0.97f, 0.97f, 1f), Vector3.one, k);
+
+        if (animT >= 1f)
+        {
+            if (cg != null) cg.alpha = 1f;
+            if (rt != null) rt.localScale = Vector3.one;
+            animTarget = null;
+        }
+    }
+
+    void CreateHeader(Transform panel, string title, float width = 1636f, float height = 110f, System.Action onBack = null)
+    {
+        var go = new GameObject("Header", typeof(RectTransform), typeof(Image));
+        go.transform.SetParent(panel, false);
+
+        var rt = go.GetComponent<RectTransform>();
+        rt.anchorMin = new Vector2(0.5f, 1f);
+        rt.anchorMax = new Vector2(0.5f, 1f);
+        rt.pivot = new Vector2(0.5f, 1f);
+        rt.anchoredPosition = new Vector2(0f, 6f);       // 略微超出卡片，避免露出浅色边
+        rt.sizeDelta = new Vector2(width, height);
+
+        var img = go.GetComponent<Image>();
+        img.sprite = roundedSprite;
+        img.type = Image.Type.Sliced;
+        img.color = new Color(0.10f, 0.11f, 0.13f, 0.32f);   // 很透明的深灰
+
+        Label(go.transform, title, 52, new Vector2(0, -height * 0.5f), new Vector2(width, height * 0.85f),
+              FontStyle.Bold, new Color(0.95f, 0.96f, 0.98f));
+
+        // 左上角返回
+        if (onBack != null)
+        {
+            var backGo = new GameObject("Back", typeof(RectTransform), typeof(Button));
+            backGo.transform.SetParent(go.transform, false);
+            var brt = backGo.GetComponent<RectTransform>();
+            brt.anchorMin = new Vector2(0f, 0.5f);
+            brt.anchorMax = new Vector2(0f, 0.5f);
+            brt.pivot = new Vector2(0f, 0.5f);
+            brt.anchoredPosition = new Vector2(28f, 0f);
+            brt.sizeDelta = new Vector2(90f, 90f);
+
+            var btn = backGo.GetComponent<Button>();
+            btn.onClick.AddListener(() =>
+            {
+                if (AudioManager.Instance != null) AudioManager.Instance.PlayTurn();
+                onBack();
+            });
+
+            Label(backGo.transform, "<", 56, Vector2.zero, new Vector2(90f, 90f), FontStyle.Bold,
+                  new Color(0.95f, 0.96f, 0.98f));
+        }
+    }
+
+    void OpenSkins()
+    {
+        if (skinScrollRect != null) skinScrollRect.verticalNormalizedPosition = 1f;
+        menuPanel.SetActive(false);
+        settingsPanel.SetActive(false);
+        leaderboardPanel.SetActive(false);
+        difficultyPanel.SetActive(false);
+        mapPanel.SetActive(false);
+        skinPanel.SetActive(true);
+        RefreshSkinTiles();
+    }
+
+    void MakeBar(Transform parent, Vector2 pos, Color color)
+    {
+        var go = new GameObject("Bar", typeof(RectTransform), typeof(Image));
+        go.transform.SetParent(parent, false);
+        var rt = go.GetComponent<RectTransform>();
+        rt.anchorMin = rt.anchorMax = new Vector2(0.5f, 0.5f);
+        rt.anchoredPosition = pos;
+        rt.sizeDelta = new Vector2(150f, 22f);
+
+        var img = go.GetComponent<Image>();
+        img.sprite = roundedSprite;
+        img.type = Image.Type.Sliced;
+        img.color = color;
+        img.raycastTarget = false;
+    }
+
+    void MakeDot(Transform parent, Vector2 pos, Color color)
+    {
+        var go = new GameObject("Dot", typeof(RectTransform), typeof(Image));
+        go.transform.SetParent(parent, false);
+        var rt = go.GetComponent<RectTransform>();
+        rt.anchorMin = rt.anchorMax = new Vector2(0.5f, 0.5f);
+        rt.anchoredPosition = pos;
+        rt.sizeDelta = new Vector2(34f, 34f);
+
+        var img = go.GetComponent<Image>();
+        img.sprite = circleSprite;
+        img.color = color;
+        img.raycastTarget = false;
+    }
+
+    void RefreshSkinTiles()
+    {
+        if (skinTiles == null) return;
+        for (int i = 0; i < skinTiles.Count; i++)
+        {
+            var img = skinTiles[i].GetComponent<Image>();
+            bool unlocked = Skins.IsUnlocked(i);
+            bool selected = GameSettings.SkinIndex == i;
+
+            if (!unlocked) img.color = new Color(0.25f, 0.26f, 0.28f, 0.9f);
+            else if (selected) img.color = new Color(0.55f, 0.60f, 0.66f, 1f);
+            else img.color = Skins.All[i].body;
         }
     }
 
@@ -520,7 +741,7 @@ public class MenuUI : MonoBehaviour
         bgmLabel.text = "背景音乐  " + Mathf.RoundToInt(GameSettings.BgmVolume * 100) + "%";
         sfxLabel.text = "音效  " + Mathf.RoundToInt(GameSettings.SfxVolume * 100) + "%";
         if (camLabel != null)
-            camLabel.text = $"镜头动画速度  {GameSettings.CameraSmoothing:0.0}（小=稳，大=跟手）";
+            camLabel.text = $"镜头速度  {GameSettings.CameraSmoothing:0.0}";
 
         if (viewLabel != null)
             viewLabel.text = "视角";
@@ -548,34 +769,79 @@ public class MenuUI : MonoBehaviour
         BuildFlash(canvasGo.transform);
 
         // ---- 主菜单 ----
-        menuPanel = Panel(canvasGo.transform, "Menu");
+        menuPanel = Panel(canvasGo.transform, "Menu", false);
+
+        // 主菜单只要一层淡压暗，让背后的自动演示能看见
+        var dimGo = new GameObject("Dim", typeof(RectTransform), typeof(Image));
+        dimGo.transform.SetParent(menuPanel.transform, false);
+        dimGo.transform.SetAsFirstSibling();
+        var dimRt = dimGo.GetComponent<RectTransform>();
+        dimRt.anchorMin = Vector2.zero;
+        dimRt.anchorMax = Vector2.one;
+        dimRt.offsetMin = Vector2.zero;
+        dimRt.offsetMax = Vector2.zero;
+        var dimImg = dimGo.GetComponent<Image>();
+        dimImg.color = new Color(0.02f, 0.04f, 0.07f, 0.42f);
+        dimImg.raycastTarget = false;
         Label(menuPanel.transform, "3D 贪吃蛇", 96, new Vector2(0, 220), new Vector2(1200, 140), FontStyle.Bold, new Color(0.85f, 1f, 0.85f));
         Label(menuPanel.transform, "A / D 左右转　W / S 持续升降（按 A/D 恢复平飞）　Shift 加速　左键拖动转视角", 26, new Vector2(0, 120), new Vector2(1400, 50), FontStyle.Normal, new Color(0.75f, 0.85f, 0.75f));
 
         Button(menuPanel.transform, "开始游戏", new Vector2(0, -20), ShowDifficulty);
         Button(menuPanel.transform, "设置", new Vector2(0, -140), OpenSettings);
         Button(menuPanel.transform, "排行榜", new Vector2(0, -260), OpenLeaderboard);
+        Button(menuPanel.transform, "皮肤", new Vector2(0, -380), OpenSkins);
 
         // ---- 设置 ----
         settingsPanel = Panel(canvasGo.transform, "Settings");
 
         // 标题固定，内容可滚动
-        Label(settingsPanel.transform, "设置", 64, new Vector2(0, 400), new Vector2(900, 100), FontStyle.Bold, new Color(0.92f, 0.98f, 1f));
 
+        // ---- 滚动视图（ScrollRect：自带范围限制与回弹）----
+        var scrollGo = new GameObject("Scroll", typeof(RectTransform), typeof(ScrollRect));
+        scrollGo.transform.SetParent(settingsPanel.transform, false);
+        var srcRt = scrollGo.GetComponent<RectTransform>();
+        srcRt.anchorMin = srcRt.anchorMax = new Vector2(0.5f, 0.5f);
+        srcRt.pivot = new Vector2(0.5f, 0.5f);
+        srcRt.anchoredPosition = new Vector2(0f, -55f);
+        srcRt.sizeDelta = new Vector2(1560f, 830f);
+        settingsScrollRect = scrollGo.GetComponent<ScrollRect>();
+
+        // 视口（负责裁剪）
+        var viewportGo = new GameObject("Viewport", typeof(RectTransform), typeof(RectMask2D), typeof(Image));
+        viewportGo.transform.SetParent(scrollGo.transform, false);
+        var vpRt = viewportGo.GetComponent<RectTransform>();
+        vpRt.anchorMin = Vector2.zero;
+        vpRt.anchorMax = Vector2.one;
+        vpRt.offsetMin = Vector2.zero;
+        vpRt.offsetMax = Vector2.zero;
+        viewportGo.GetComponent<Image>().color = new Color(0, 0, 0, 0);   // 仅供遮罩
+
+        // 内容
         var contentGo = new GameObject("Content", typeof(RectTransform));
-        contentGo.transform.SetParent(settingsPanel.transform, false);
+        contentGo.transform.SetParent(viewportGo.transform, false);
         settingsContent = contentGo.GetComponent<RectTransform>();
-        settingsContent.anchorMin = settingsContent.anchorMax = new Vector2(0.5f, 0.5f);
-        settingsContent.pivot = new Vector2(0.5f, 0f);
-        settingsContent.anchoredPosition = new Vector2(0, -420);
-        settingsContent.sizeDelta = new Vector2(1300, 1100);
+        settingsContent.anchorMin = new Vector2(0f, 1f);
+        settingsContent.anchorMax = new Vector2(1f, 1f);
+        settingsContent.pivot = new Vector2(0.5f, 1f);
+        settingsContent.anchoredPosition = Vector2.zero;
+        settingsContent.sizeDelta = new Vector2(0f, 800f);
 
-        float rowY = -60f;
-        float rowStep = 130f;
+        settingsScrollRect.viewport = vpRt;
+        settingsScrollRect.content = settingsContent;
+        settingsScrollRect.horizontal = false;
+        settingsScrollRect.vertical = true;
+        settingsScrollRect.movementType = ScrollRect.MovementType.Clamped;
+        settingsScrollRect.inertia = true;
+        settingsScrollRect.decelerationRate = 0.12f;
+        settingsScrollRect.scrollSensitivity = 45f;
+        settingsScrollRect.elasticity = 0.1f;
+
+        float rowY = -20f;
+        float rowStep = 140f;    // 行距加大
 
         // 每个设置一行：左边名字，右边控件
         bgmLabel = RowLabel(settingsContent, "背景音乐", rowY);
-        bgmSlider = Slider(settingsContent, new Vector2(140, rowY), 0f, 1f, GameSettings.BgmVolume, v =>
+        bgmSlider = Slider(settingsContent, new Vector2(320, rowY), 0f, 1f, GameSettings.BgmVolume, v =>
         {
             GameSettings.BgmVolume = v;
             RefreshLabels();
@@ -583,7 +849,7 @@ public class MenuUI : MonoBehaviour
         rowY -= rowStep;
 
         sfxLabel = RowLabel(settingsContent, "音效", rowY);
-        sfxSlider = Slider(settingsContent, new Vector2(140, rowY), 0f, 1f, GameSettings.SfxVolume, v =>
+        sfxSlider = Slider(settingsContent, new Vector2(320, rowY), 0f, 1f, GameSettings.SfxVolume, v =>
         {
             GameSettings.SfxVolume = v;
             RefreshLabels();
@@ -592,7 +858,7 @@ public class MenuUI : MonoBehaviour
         rowY -= rowStep;
 
         speedLabel = RowLabel(settingsContent, "蛇的速度", rowY);
-        speedSlider = Slider(settingsContent, new Vector2(140, rowY), 0f, 1f, GameSettings.IntervalToSlider(GameSettings.MoveInterval), v =>
+        speedSlider = Slider(settingsContent, new Vector2(320, rowY), 0f, 1f, GameSettings.IntervalToSlider(GameSettings.MoveInterval), v =>
         {
             GameSettings.MoveInterval = GameSettings.SliderToInterval(v);
             if (game != null) game.MoveInterval = GameSettings.MoveInterval;
@@ -600,16 +866,13 @@ public class MenuUI : MonoBehaviour
         });
         rowY -= rowStep;
 
-        camLabel = RowLabel(settingsContent, "镜头动画速度", rowY);
-        camSlider = Slider(settingsContent, new Vector2(140, rowY), 0.5f, 20f, GameSettings.CameraSmoothing, v =>
+        camLabel = RowLabel(settingsContent, "镜头速度", rowY);
+        camSlider = Slider(settingsContent, new Vector2(320, rowY), 0.5f, 20f, GameSettings.CameraSmoothing, v =>
         {
             GameSettings.CameraSmoothing = v;
             RefreshLabels();
         });
         camSlider.gameObject.AddComponent<SliderReleaseSound>();
-        rowY -= rowStep;
-
-        RowButton(settingsContent, "自定义颜色", rowY, ShowColorPanel);
         rowY -= rowStep;
 
         viewLabel = RowLabel(settingsContent, "视角", rowY);
@@ -621,47 +884,133 @@ public class MenuUI : MonoBehaviour
         });
         viewButtonLabel = Label(viewButton.transform, "固定", 30, Vector2.zero,
                                 new Vector2(520, 76), FontStyle.Bold, Color.white);
-        rowY -= rowStep;
-
-        RowButton(settingsContent, "返回", rowY, CloseSettings);
 
         // 滚动范围
-        settingsContentHeight = Mathf.Abs(rowY) + 160f;
+        // 内容总高（最后一行底部 + 余量）
+        settingsContentHeight = Mathf.Abs(rowY) + 150f;    // 最后一行下面留 150
+        settingsContent.sizeDelta = new Vector2(0f, settingsContentHeight);
 
-        // ---- 调色板 ----
-        colorPanel = Panel(canvasGo.transform, "ColorPicker");
-        Label(colorPanel.transform, "自定义颜色", 64, new Vector2(0, 380), new Vector2(900, 100), FontStyle.Bold, Color.white);
+        // 顶栏最后创建 → 盖住滚动到上面的内容
+        CreateHeader(settingsPanel.transform, "设置", 1636f, 110f, CloseSettings);
+        settingsContent.SetAsFirstSibling();
 
-        Color palette = new Color(0.52f, 0.90f, 0.62f);
-        Color[] swatches =
-        {
-            new Color(0.52f, 0.90f, 0.62f), new Color(0.30f, 0.86f, 0.72f), new Color(0.25f, 0.70f, 0.95f),
-            new Color(0.45f, 0.52f, 0.95f), new Color(0.75f, 0.45f, 0.95f), new Color(0.95f, 0.45f, 0.72f),
-            new Color(0.95f, 0.55f, 0.35f), new Color(0.98f, 0.82f, 0.25f), new Color(0.85f, 0.95f, 0.45f),
-            new Color(0.95f, 0.95f, 0.95f), new Color(0.55f, 0.60f, 0.68f), new Color(0.12f, 0.14f, 0.18f)
-        };
+        // ---- 皮肤 ----
+        skinPanel = Panel(canvasGo.transform, "Skins");
+        CreateHeader(skinPanel.transform, "皮肤", 1636f, 110f, () => { ClosePanel(skinPanel); ActivatePanel(menuPanel); });
 
-        BuildColorRow(colorPanel.transform, "蛇头", 240f, swatches, c =>
-        {
-            GameSettings.HeadColor = c;
-            ApplyColorsToGame();
-        });
-        BuildColorRow(colorPanel.transform, "蛇身", 40f, swatches, c =>
-        {
-            GameSettings.BodyColor = c;
-            ApplyColorsToGame();
-        });
-        BuildColorRow(colorPanel.transform, "描边", -160f, swatches, c =>
-        {
-            GameSettings.OutlineColor = c;
-            ApplyColorsToGame();
-        });
+        // 滚动区域
+        var skinScrollGo = new GameObject("SkinScroll", typeof(RectTransform), typeof(ScrollRect));
+        skinScrollGo.transform.SetParent(skinPanel.transform, false);
+        var ssRt = skinScrollGo.GetComponent<RectTransform>();
+        ssRt.anchorMin = ssRt.anchorMax = new Vector2(0.5f, 0.5f);
+        ssRt.anchoredPosition = new Vector2(0f, -55f);
+        ssRt.sizeDelta = new Vector2(1560f, 830f);
+        skinScrollRect = skinScrollGo.GetComponent<ScrollRect>();
 
-        Button(colorPanel.transform, "返回", new Vector2(0, -330), () =>
+        var skinVp = new GameObject("Viewport", typeof(RectTransform), typeof(RectMask2D), typeof(Image));
+        skinVp.transform.SetParent(skinScrollGo.transform, false);
+        var svpRt = skinVp.GetComponent<RectTransform>();
+        svpRt.anchorMin = Vector2.zero;
+        svpRt.anchorMax = Vector2.one;
+        svpRt.offsetMin = Vector2.zero;
+        svpRt.offsetMax = Vector2.zero;
+        skinVp.GetComponent<Image>().color = new Color(0, 0, 0, 0);
+
+        var skinContentGo = new GameObject("Content", typeof(RectTransform));
+        skinContentGo.transform.SetParent(skinVp.transform, false);
+        var skc = skinContentGo.GetComponent<RectTransform>();
+        skc.anchorMin = new Vector2(0f, 1f);
+        skc.anchorMax = new Vector2(1f, 1f);
+        skc.pivot = new Vector2(0.5f, 1f);
+        skc.anchoredPosition = Vector2.zero;
+
+        skinScrollRect.viewport = svpRt;
+        skinScrollRect.content = skc;
+        skinScrollRect.horizontal = false;
+        skinScrollRect.vertical = true;
+        skinScrollRect.movementType = ScrollRect.MovementType.Clamped;
+        skinScrollRect.inertia = true;
+        skinScrollRect.decelerationRate = 0.12f;
+        skinScrollRect.scrollSensitivity = 45f;
+
+        // 生成 3D 预览贴图
+        var gameRef = FindObjectOfType<SnakeGame>();
+        if (gameRef != null) gameRef.BuildSkinPreviews();
+        var previewTex = gameRef != null ? gameRef.SkinPreviewRT : null;
+
+        skinTiles = new System.Collections.Generic.List<GameObject>();
+
+        int cols = 4;
+        float tileW = 330f, tileH = 320f, gapX = 14f, gapY = 18f;
+
+        for (int i = 0; i < Skins.All.Length; i++)
         {
-            colorPanel.SetActive(false);
-            settingsPanel.SetActive(true);
-        });
+            int idx = i;
+            var skin = Skins.All[i];
+            bool unlocked = Skins.IsUnlocked(i);
+
+            int col = i % cols;
+            int row = i / cols;
+
+            var tile = new GameObject("Skin_" + skin.name, typeof(RectTransform), typeof(Image), typeof(Button));
+            tile.transform.SetParent(skinContentGo.transform, false);
+            var rt = tile.GetComponent<RectTransform>();
+            rt.anchorMin = rt.anchorMax = new Vector2(0.5f, 1f);
+            rt.pivot = new Vector2(0.5f, 1f);
+            rt.anchoredPosition = new Vector2((col - (cols - 1) * 0.5f) * (tileW + gapX),
+                                             -20f - row * (tileH + gapY));
+            rt.sizeDelta = new Vector2(tileW, tileH);
+
+            var img = tile.GetComponent<Image>();
+            img.sprite = roundedSprite;
+            img.type = Image.Type.Sliced;
+            img.color = new Color(0.20f, 0.21f, 0.24f, 0.95f);
+
+            var btn = tile.GetComponent<Button>();
+            btn.interactable = unlocked;
+            if (unlocked)
+                btn.onClick.AddListener(() =>
+                {
+                    GameSettings.SkinIndex = idx;
+                    var g = FindObjectOfType<SnakeGame>();
+                    if (g != null) g.ApplyCustomColors();
+                    // 皮肤格子点击不播音效
+                    RefreshSkinTiles();
+                });
+
+            // 3D 预览：从大贴图里取第 i 格
+            var rawGo = new GameObject("Preview", typeof(RectTransform), typeof(RawImage));
+            rawGo.transform.SetParent(tile.transform, false);
+            var rrt = rawGo.GetComponent<RectTransform>();
+            rrt.anchorMin = new Vector2(0.5f, 1f);
+            rrt.anchorMax = new Vector2(0.5f, 1f);
+            rrt.pivot = new Vector2(0.5f, 1f);
+            rrt.anchoredPosition = new Vector2(0f, -12f);
+            rrt.sizeDelta = new Vector2(230f, 230f);
+
+            var raw = rawGo.GetComponent<RawImage>();
+            raw.texture = previewTex;
+            float h = 1f / Skins.All.Length;
+            raw.uvRect = new Rect(0f, 1f - (i + 1) * h, 1f, h);   // 竖排取第 i 片
+            raw.raycastTarget = false;
+            raw.color = unlocked ? Color.white : new Color(0.35f, 0.36f, 0.38f, 0.85f);
+
+            // 名字（顶部对齐，固定在预览下方）
+            var nameText = Label(tile.transform, unlocked ? skin.name : "未解锁", 26, Vector2.zero,
+                                 new Vector2(tileW, 40), FontStyle.Bold,
+                                 unlocked ? Color.white : new Color(0.68f, 0.70f, 0.73f));
+            var nrt = nameText.rectTransform;
+            nrt.anchorMin = nrt.anchorMax = new Vector2(0.5f, 1f);
+            nrt.pivot = new Vector2(0.5f, 1f);
+            nrt.anchoredPosition = new Vector2(0f, -250f);
+
+            skinTiles.Add(tile);
+        }
+
+        // 内容高度 = 行数
+        int rows = Mathf.CeilToInt(Skins.All.Length / (float)cols);
+        skc.sizeDelta = new Vector2(0f, 20f + rows * (tileH + gapY) + 40f);
+
 
         // ---- 排行榜 ----
         leaderboardPanel = Panel(canvasGo.transform, "Leaderboard");
@@ -759,12 +1108,13 @@ public class MenuUI : MonoBehaviour
             card.transform.SetParent(go.transform, false);
             var crt = card.GetComponent<RectTransform>();
             crt.anchorMin = crt.anchorMax = new Vector2(0.5f, 0.5f);
-            crt.sizeDelta = new Vector2(1500, 900);
+            crt.sizeDelta = new Vector2(1620, 980);
 
             var cardImg = card.GetComponent<Image>();
             cardImg.sprite = roundedSprite;
             cardImg.type = Image.Type.Sliced;
-            cardImg.color = new Color(0.07f, 0.10f, 0.16f, 0.96f);
+            cardImg.color = new Color(0.62f, 0.64f, 0.68f, 0.10f);   // 很淡的灰
+
 
             // 卡片描边
             var border = new GameObject("Border", typeof(RectTransform), typeof(Image));
@@ -779,7 +1129,7 @@ public class MenuUI : MonoBehaviour
             var bImg = border.GetComponent<Image>();
             bImg.sprite = roundedSprite;
             bImg.type = Image.Type.Sliced;
-            bImg.color = new Color(0.20f, 0.55f, 0.48f, 0.55f);
+            bImg.color = new Color(0.75f, 0.77f, 0.80f, 0.10f);
         }
         return go;
     }
@@ -796,14 +1146,14 @@ public class MenuUI : MonoBehaviour
         var img = go.GetComponent<Image>();
         img.sprite = roundedSprite;
         img.type = Image.Type.Sliced;
-        img.color = new Color(0.13f, 0.32f, 0.24f, 0.98f);
+        img.color = new Color(0.22f, 0.24f, 0.27f, 0.94f);
 
         var btn = go.GetComponent<Button>();
         var colors = btn.colors;
-        colors.normalColor = new Color(0.13f, 0.32f, 0.24f, 1f);
-        colors.highlightedColor = new Color(0.22f, 0.52f, 0.36f, 1f);
-        colors.pressedColor = new Color(0.10f, 0.24f, 0.17f, 1f);
-        colors.selectedColor = new Color(0.22f, 0.52f, 0.36f, 1f);
+        colors.normalColor = new Color(0.22f, 0.24f, 0.27f, 1f);
+        colors.highlightedColor = new Color(0.34f, 0.37f, 0.41f, 1f);
+        colors.pressedColor = new Color(0.16f, 0.17f, 0.19f, 1f);
+        colors.selectedColor = new Color(0.34f, 0.37f, 0.41f, 1f);
         colors.fadeDuration = 0.08f;
         btn.colors = colors;
         btn.onClick.AddListener(() =>
@@ -831,7 +1181,7 @@ public class MenuUI : MonoBehaviour
         t.text = text;
         t.fontSize = size;
         t.fontStyle = style;
-        t.color = color ?? Color.white;
+        t.color = color ?? new Color(0.92f, 0.93f, 0.95f);
         t.alignment = anchor;
         t.horizontalOverflow = HorizontalWrapMode.Overflow;
         t.verticalOverflow = VerticalWrapMode.Overflow;
@@ -883,27 +1233,28 @@ public class MenuUI : MonoBehaviour
         var go = new GameObject("Slider", typeof(RectTransform), typeof(Slider));
         go.transform.SetParent(parent, false);
         var rt = go.GetComponent<RectTransform>();
-        rt.anchorMin = rt.anchorMax = new Vector2(0.5f, 0.5f);
-        rt.anchoredPosition = pos;
-        rt.sizeDelta = new Vector2(680, 26);
+        rt.anchorMin = rt.anchorMax = new Vector2(0.5f, 1f);
+        rt.pivot = new Vector2(0.5f, 1f);
+        rt.anchoredPosition = new Vector2(pos.x, pos.y);
+        rt.sizeDelta = new Vector2(480, 26);
 
         // 背景条
         var bg = new GameObject("Background", typeof(RectTransform), typeof(Image));
         bg.transform.SetParent(go.transform, false);
         var bgRt = bg.GetComponent<RectTransform>();
         bgRt.anchorMin = bgRt.anchorMax = new Vector2(0.5f, 0.5f);
-        bgRt.sizeDelta = new Vector2(680, 16);
+        bgRt.sizeDelta = new Vector2(480, 16);
         var bgImg = bg.GetComponent<Image>();
         bgImg.sprite = roundedSprite;
         bgImg.type = Image.Type.Sliced;
-        bgImg.color = new Color(0.10f, 0.13f, 0.18f, 0.98f);
+        bgImg.color = new Color(0.14f, 0.15f, 0.17f, 0.92f);
 
         // 填充条
         var fillArea = new GameObject("Fill Area", typeof(RectTransform));
         fillArea.transform.SetParent(go.transform, false);
         var faRt = fillArea.GetComponent<RectTransform>();
         faRt.anchorMin = faRt.anchorMax = new Vector2(0.5f, 0.5f);
-        faRt.sizeDelta = new Vector2(680, 16);
+        faRt.sizeDelta = new Vector2(480, 16);
 
         var fill = new GameObject("Fill", typeof(RectTransform), typeof(Image));
         fill.transform.SetParent(fillArea.transform, false);
@@ -912,14 +1263,14 @@ public class MenuUI : MonoBehaviour
         var fillImg = fill.GetComponent<Image>();
         fillImg.sprite = roundedSprite;
         fillImg.type = Image.Type.Sliced;
-        fillImg.color = new Color(0.32f, 0.78f, 0.52f, 1f);
+        fillImg.color = new Color(0.78f, 0.80f, 0.84f, 1f);
 
         // 滑块
         var handleArea = new GameObject("Handle Slide Area", typeof(RectTransform));
         handleArea.transform.SetParent(go.transform, false);
         var haRt = handleArea.GetComponent<RectTransform>();
         haRt.anchorMin = haRt.anchorMax = new Vector2(0.5f, 0.5f);
-        haRt.sizeDelta = new Vector2(680, 30);
+        haRt.sizeDelta = new Vector2(480, 30);
 
         var handle = new GameObject("Handle", typeof(RectTransform), typeof(Image));
         handle.transform.SetParent(handleArea.transform, false);
@@ -927,7 +1278,7 @@ public class MenuUI : MonoBehaviour
         hRt.sizeDelta = new Vector2(34, 34);
         var handleImg = handle.GetComponent<Image>();
         handleImg.sprite = circleSprite;
-        handleImg.color = new Color(0.88f, 0.97f, 0.90f, 1f);
+        handleImg.color = new Color(0.95f, 0.96f, 0.98f, 1f);
 
         var slider = go.GetComponent<Slider>();
         slider.fillRect = fillRt;

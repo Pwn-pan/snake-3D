@@ -14,6 +14,7 @@ public static class GameSettings
     private const string K_HEAD = "snake.headColor";
     private const string K_BODY = "snake.bodyColor";
     private const string K_OUTLINE = "snake.outlineColor";
+    private const string K_SKIN = "snake.skin";
     private const string K_MAP = "snake.mapSize";
     private const string K_DIFF = "snake.difficulty";
 
@@ -69,6 +70,17 @@ public static class GameSettings
 
     private static void SetColor(string key, Color c) =>
         PlayerPrefs.SetString(key, "#" + ColorUtility.ToHtmlStringRGB(c));
+
+    /// <summary>当前皮肤索引。</summary>
+    public static int SkinIndex
+    {
+        get
+        {
+            int v = PlayerPrefs.GetInt(K_SKIN, 0);
+            return Mathf.Clamp(v, 0, Skins.All.Length - 1);
+        }
+        set { PlayerPrefs.SetInt(K_SKIN, Mathf.Clamp(value, 0, Skins.All.Length - 1)); PlayerPrefs.Save(); }
+    }
 
     public static Color HeadColor
     {
