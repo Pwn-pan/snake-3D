@@ -11,7 +11,14 @@
 
 Windows 64 位（解压后双击 `Snake3D.exe`，无需安装 Unity）：
 
-**[下载 v1.1](https://github.com/Pwn-pan/snake-3D/releases/latest)**（25 MB）
+| 版本 | 内容 | 下载 |
+|---|---|---|
+| **v1.3** | 皮肤系统、牢大主题（脸贴图 / 冰红茶 / 专属音效）、第二人称视角、UI 半透明化 | **[下载](https://github.com/Pwn-pan/snake-3D/releases/download/v1.3/3D%E8%B4%AA%E5%90%83%E8%9B%87_v1.3.zip)**（29 MB） |
+| v1.1 | 云端排行榜、昵称、音效音量控制 | [下载](https://github.com/Pwn-pan/snake-3D/releases/tag/v1.1)（25 MB） |
+| v1.0 | 难度与地图选择、暂停、结算界面 | [下载](https://github.com/Pwn-pan/snake-3D/releases/tag/v1.0) |
+| v0.9 | 首个可玩版本 | [下载](https://github.com/Pwn-pan/snake-3D/releases/tag/v0.9) |
+
+> 推荐用最新版；旧版本保留仅作记录。
 
 ## 玩法
 

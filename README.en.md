@@ -11,7 +11,14 @@ A snake game that lives in a cube — you can move forward, sideways, **and up a
 
 Windows 64-bit build (unzip and run `Snake3D.exe` — Unity is not required):
 
-**[Download v1.1](https://github.com/Pwn-pan/snake-3D/releases/latest)** (25 MB)
+| Version | Highlights | Download |
+|---|---|---|
+| **v1.3** | Skin system, Laoda theme (face texture / iced tea / custom SFX), second-person camera, translucent UI | **[Download](https://github.com/Pwn-pan/snake-3D/releases/download/v1.3/3D%E8%B4%AA%E5%90%83%E8%9B%87_v1.3.zip)** (29 MB) |
+| v1.1 | Cloud leaderboard, nickname, audio volume control | [Download](https://github.com/Pwn-pan/snake-3D/releases/tag/v1.1) (25 MB) |
+| v1.0 | Difficulty & map selection, pause, game-over screen | [Download](https://github.com/Pwn-pan/snake-3D/releases/tag/v1.0) |
+| v0.9 | First playable version | [Download](https://github.com/Pwn-pan/snake-3D/releases/tag/v0.9) |
+
+> Latest release is recommended; older builds are kept for reference.
 
 Requirements: Windows 10 / 11 (64-bit) and a DX11-capable GPU. **No Unity installation or runtime is required.**
 
